@@ -1,0 +1,71 @@
+<?php
+
+use Illuminate\Database\Migrations\Migration;
+use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\Schema;
+
+return new class extends Migration
+{
+    public function up(): void
+    {
+        Schema::create('paystack_subaccounts', function (Blueprint $table) {
+            $table->id();
+            $table->nullableMorphs('owner');
+            $table->string('subaccount_code')->unique();
+            $table->string('business_name');
+            $table->string('settlement_bank');
+            $table->string('bank_name')->nullable();
+            $table->string('account_type')->default('bank');
+            $table->text('account_number');
+            $table->string('account_number_last4', 4);
+            $table->string('account_name')->nullable();
+            $table->string('currency', 3);
+            $table->decimal('percentage_charge', 5, 2)->default(0);
+            $table->boolean('active')->default(true);
+            $table->json('paystack_data')->nullable();
+            $table->timestamps();
+        });
+
+        Schema::create('paystack_payments', function (Blueprint $table) {
+            $table->id();
+            $table->string('reference')->unique();
+            $table->foreignId('subaccount_id')->nullable()->constrained('paystack_subaccounts')->nullOnDelete();
+            $table->nullableMorphs('payable');
+            $table->string('email');
+            $table->unsignedBigInteger('amount');
+            $table->unsignedBigInteger('platform_fee')->default(0);
+            $table->unsignedBigInteger('paystack_fee')->nullable();
+            $table->string('currency', 3);
+            $table->string('status')->default('pending')->index();
+            $table->string('access_code')->nullable();
+            $table->text('authorization_url')->nullable();
+            $table->unsignedBigInteger('paystack_transaction_id')->nullable();
+            $table->string('channel')->nullable();
+            $table->string('failure_reason')->nullable();
+            $table->json('metadata')->nullable();
+            $table->json('paystack_data')->nullable();
+            $table->timestamp('paid_at')->nullable();
+            $table->unsignedBigInteger('refunded_amount')->default(0);
+            $table->timestamp('refunded_at')->nullable();
+            $table->json('refund_ids')->nullable();
+            $table->timestamps();
+        });
+
+        Schema::create('paystack_webhook_events', function (Blueprint $table) {
+            $table->id();
+            $table->string('event')->index();
+            $table->string('payload_hash', 64)->unique();
+            $table->json('payload');
+            $table->timestamp('processed_at')->nullable();
+            $table->text('error')->nullable();
+            $table->timestamps();
+        });
+    }
+
+    public function down(): void
+    {
+        Schema::dropIfExists('paystack_webhook_events');
+        Schema::dropIfExists('paystack_payments');
+        Schema::dropIfExists('paystack_subaccounts');
+    }
+};

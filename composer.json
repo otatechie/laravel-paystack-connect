@@ -1,0 +1,57 @@
+{
+    "name": "otatechie/laravel-paystack-connect",
+    "description": "Marketplace payments for Laravel on Paystack: seller onboarding, subaccounts, split payments with platform fees, and webhooks that are safe to trust.",
+    "keywords": ["laravel", "paystack", "marketplace", "split-payments", "subaccounts", "mobile-money"],
+    "homepage": "https://github.com/otatechie/laravel-paystack-connect",
+    "license": "MIT",
+    "authors": [
+        {
+            "name": "otatechie"
+        }
+    ],
+    "require": {
+        "php": "^8.3",
+        "illuminate/contracts": "^12.0||^13.0",
+        "spatie/laravel-package-tools": "^1.92"
+    },
+    "require-dev": {
+        "larastan/larastan": "^3.0",
+        "laravel/pint": "^1.14",
+        "orchestra/testbench": "^10.0||^11.0",
+        "pestphp/pest": "^4.0||^5.0",
+        "pestphp/pest-plugin-laravel": "^4.0||^5.0"
+    },
+    "autoload": {
+        "psr-4": {
+            "Otatechie\\PaystackConnect\\": "src/"
+        }
+    },
+    "autoload-dev": {
+        "psr-4": {
+            "Otatechie\\PaystackConnect\\Tests\\": "tests/"
+        }
+    },
+    "scripts": {
+        "test": "vendor/bin/pest",
+        "analyse": "vendor/bin/phpstan analyse --memory-limit=1G",
+        "format": "vendor/bin/pint"
+    },
+    "config": {
+        "sort-packages": true,
+        "allow-plugins": {
+            "pestphp/pest-plugin": true
+        }
+    },
+    "extra": {
+        "laravel": {
+            "providers": [
+                "Otatechie\\PaystackConnect\\PaystackConnectServiceProvider"
+            ],
+            "aliases": {
+                "PaystackConnect": "Otatechie\\PaystackConnect\\Facades\\PaystackConnect"
+            }
+        }
+    },
+    "minimum-stability": "stable",
+    "prefer-stable": true
+}
