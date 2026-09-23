@@ -13,6 +13,7 @@ use Illuminate\Support\Carbon;
  * @property string $event
  * @property string $payload_hash
  * @property array<string, mixed> $payload
+ * @property Carbon|null $claimed_at Set while a request is processing the event.
  * @property Carbon|null $processed_at
  * @property string|null $error
  */
@@ -26,6 +27,7 @@ class WebhookEvent extends Model
     {
         return [
             'payload' => 'array',
+            'claimed_at' => 'datetime',
             'processed_at' => 'datetime',
         ];
     }

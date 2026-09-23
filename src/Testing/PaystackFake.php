@@ -135,6 +135,7 @@ class PaystackFake extends PaystackClient
             ],
             $method === 'GET' && $uri === '/bank' => $this->banks($data['type'] ?? null),
             $method === 'POST' && $uri === '/refund' => [
+                'id' => random_int(1_000_000, 9_999_999),
                 'transaction' => ['reference' => $data['transaction']],
                 'amount' => $data['amount'],
                 'status' => 'pending',

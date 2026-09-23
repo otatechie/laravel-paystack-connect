@@ -2,8 +2,11 @@
 
 namespace Otatechie\PaystackConnect;
 
+use Illuminate\Contracts\Cache\LockProvider;
+use Illuminate\Contracts\Cache\Repository as Cache;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\Relation;
+use InvalidArgumentException;
 use Otatechie\PaystackConnect\Events\SubaccountConnected;
 use Otatechie\PaystackConnect\Http\PaystackClient;
 use Otatechie\PaystackConnect\Models\Subaccount;
@@ -27,11 +30,23 @@ class Subaccounts
     public function __construct(
         private readonly PaystackClient $client,
         private readonly Banks $banks,
+        private readonly Cache $cache,
         private readonly bool $verifyAccounts,
         private readonly float $defaultPercentageCharge,
     ) {}
 
     public function connect(Model $owner, SettlementAccount $account, ?float $percentageCharge = null): Subaccount
+    {
+        // Two overlapping connects for a new seller would create two Paystack subaccounts.
+        $store = $this->cache->getStore();
+        $lock = $store instanceof LockProvider
+            ? $store->lock('paystack-connect:connect:'.$owner->getMorphClass().':'.$owner->getKey(), 30)
+            : null;
+
+        return $lock ? $lock->block(10, fn () => $this->doConnect($owner, $account, $percentageCharge)) : $this->doConnect($owner, $account, $percentageCharge);
+    }
+
+    private function doConnect(Model $owner, SettlementAccount $account, ?float $percentageCharge): Subaccount
     {
         if ($this->verifyAccounts && $account->accountName === null && in_array($account->currency, self::LOOKUP_CURRENCIES, true)) {
             $account = $account->withAccountName($this->banks->resolve($account->accountNumber, $account->bankCode));
@@ -74,7 +89,7 @@ class Subaccounts
                 'currency' => $account->currency,
                 'percentage_charge' => $payload['percentage_charge'],
                 'active' => (bool) ($data['active'] ?? true),
-                'paystack_data' => $data,
+                'paystack_data' => $this->withoutSecrets($data),
             ],
         );
 
@@ -86,6 +101,32 @@ class Subaccounts
     public function for(Model $owner): ?Subaccount
     {
         return Subaccount::query()->for($owner)->first();
+    }
+
+    /**
+     * Link an imported subaccount to its seller. The owner is also recorded in
+     * Paystack's metadata, so a later import keeps the link.
+     *
+     * @throws InvalidArgumentException When no imported subaccount has this code.
+     */
+    public function attach(Model $owner, string $subaccountCode): Subaccount
+    {
+        $subaccount = Subaccount::query()->where('subaccount_code', $subaccountCode)->first()
+            ?? throw new InvalidArgumentException("No subaccount {$subaccountCode} is stored locally. Run paystack-connect:import-subaccounts first.");
+
+        $this->client->put("/subaccount/{$subaccountCode}", [
+            'metadata' => json_encode([
+                'owner_type' => $owner->getMorphClass(),
+                'owner_id' => $owner->getKey(),
+            ]),
+        ]);
+
+        $subaccount->update([
+            'owner_type' => $owner->getMorphClass(),
+            'owner_id' => $owner->getKey(),
+        ]);
+
+        return $subaccount;
     }
 
     /**
@@ -125,20 +166,23 @@ class Subaccounts
 
         if (isset($metadata['owner_type'], $metadata['owner_id'])) {
             $class = Relation::getMorphedModel($metadata['owner_type']) ?? $metadata['owner_type'];
-            $owner = class_exists($class) ? $class::find($metadata['owner_id']) : null;
+            $owner = is_string($class) && is_subclass_of($class, Model::class) ? $class::find($metadata['owner_id']) : null;
         }
 
         $accountNumber = (string) ($data['account_number'] ?? '');
         $currency = strtoupper($data['currency'] ?? (string) config('paystack-connect.currency', 'GHS'));
 
         // Paystack lists the bank's name as settlement_bank; the code comes from bank_id.
-        $bank = isset($data['bank_id']) ? $this->banks->findById($currency, (int) $data['bank_id']) : null;
+        $bankId = $data['bank_id'] ?? $data['bank'] ?? null;
+        $bank = is_numeric($bankId) ? $this->banks->findById($currency, (int) $bankId) : null;
+
+        // A subaccount linked locally with attach() keeps its owner when Paystack's metadata has none.
+        $ownerColumns = $owner ? ['owner_type' => $owner->getMorphClass(), 'owner_id' => $owner->getKey()] : [];
 
         Subaccount::updateOrCreate(
             ['subaccount_code' => $data['subaccount_code']],
             [
-                'owner_type' => $owner?->getMorphClass(),
-                'owner_id' => $owner?->getKey(),
+                ...$ownerColumns,
                 'business_name' => $data['business_name'] ?? '',
                 'settlement_bank' => $bank['code'] ?? null,
                 'bank_name' => $bank['name'] ?? $data['settlement_bank'] ?? null,
@@ -148,8 +192,22 @@ class Subaccounts
                 'currency' => $currency,
                 'percentage_charge' => $data['percentage_charge'] ?? 0,
                 'active' => (bool) ($data['active'] ?? true),
-                'paystack_data' => $data,
+                'paystack_data' => $this->withoutSecrets($data),
             ],
         );
+    }
+
+    /**
+     * Paystack echoes the account number and contact details back in clear
+     * text. They're stored encrypted in their own columns, never here.
+     *
+     * @param  array<string, mixed>  $data
+     * @return array<string, mixed>
+     */
+    private function withoutSecrets(array $data): array
+    {
+        unset($data['account_number'], $data['primary_contact_email'], $data['primary_contact_name'], $data['primary_contact_phone']);
+
+        return $data;
     }
 }

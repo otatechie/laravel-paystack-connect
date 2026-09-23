@@ -5,7 +5,7 @@ namespace Otatechie\PaystackConnect\Events;
 use Illuminate\Foundation\Events\Dispatchable;
 use Otatechie\PaystackConnect\Models\Payment;
 
-/** The payment failed or was abandoned. */
+/** The charge was declined. The customer can still pay on the same checkout. */
 class PaymentFailed
 {
     use Dispatchable;

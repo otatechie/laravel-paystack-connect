@@ -3,6 +3,7 @@
 namespace Otatechie\PaystackConnect;
 
 use Illuminate\Contracts\Container\Container;
+use Illuminate\Support\Facades\DB;
 use InvalidArgumentException;
 use Otatechie\PaystackConnect\Exceptions\InvalidAmount;
 use Otatechie\PaystackConnect\Http\PaystackClient;
@@ -65,26 +66,38 @@ class PaystackConnect
      */
     public function refund(Payment $payment, ?Money $amount = null): array
     {
-        if (! $payment->isSuccessful()) {
-            throw new InvalidArgumentException('Only a successful payment can be refunded.');
-        }
+        // Lock the row so two refunds can't both pass the check, and so the
+        // check uses what webhooks have recorded, not a stale model.
+        $refund = DB::transaction(function () use ($payment, $amount) {
+            $fresh = Payment::query()->whereKey($payment->getKey())->lockForUpdate()->firstOrFail();
 
-        $amount ??= $payment->refundableAmount();
+            if (! $fresh->isSuccessful()) {
+                throw new InvalidArgumentException('Only a successful payment can be refunded.');
+            }
 
-        if ($amount->currency !== $payment->currency) {
-            throw InvalidAmount::currencyMismatch($amount->currency, $payment->currency);
-        }
+            $amount ??= $fresh->refundableAmount();
 
-        if ($amount->isZero() || $amount->minor > $payment->refundableAmount()->minor) {
-            throw new InvalidAmount("Refund must be above zero and at most {$payment->refundableAmount()}.");
-        }
+            if ($amount->currency !== $fresh->currency) {
+                throw InvalidAmount::currencyMismatch($amount->currency, $fresh->currency);
+            }
 
-        $refund = $this->client()->post('/refund', [
-            'transaction' => $payment->reference,
-            'amount' => $amount->minor,
-        ])['data'];
+            if ($amount->isZero() || $amount->minor > $fresh->refundableAmount()->minor) {
+                throw new InvalidAmount("Refund must be above zero and at most {$fresh->refundableAmount()}.");
+            }
 
-        $payment->increment('refund_pending', $amount->minor);
+            $refund = $this->client()->post('/refund', [
+                'transaction' => $fresh->reference,
+                'amount' => $amount->minor,
+            ])['data'];
+
+            if (isset($refund['id'])) {
+                $fresh->update(['pending_refunds' => [...($fresh->pending_refunds ?? []), $refund['id'] => $amount->minor]]);
+            }
+
+            return $refund;
+        });
+
+        $payment->refresh();
 
         return $refund;
     }

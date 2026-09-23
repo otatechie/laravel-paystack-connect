@@ -23,7 +23,11 @@ trait HasPaystackSubaccount
 
     public function connectPaystackAccount(SettlementAccount $account, ?float $percentageCharge = null): Subaccount
     {
-        return PaystackConnect::subaccounts()->connect($this, $account, $percentageCharge);
+        $subaccount = PaystackConnect::subaccounts()->connect($this, $account, $percentageCharge);
+
+        $this->unsetRelation('paystackSubaccount');
+
+        return $subaccount;
     }
 
     public function canReceivePaystackPayments(): bool

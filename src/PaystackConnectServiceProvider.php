@@ -43,6 +43,7 @@ class PaystackConnectServiceProvider extends PackageServiceProvider
         $this->app->singleton(Subaccounts::class, fn ($app) => new Subaccounts(
             $app->make(PaystackClient::class),
             $app->make(Banks::class),
+            $app->make(Cache::class),
             (bool) config('paystack-connect.sellers.verify_accounts', true),
             (float) config('paystack-connect.sellers.percentage_charge', 0),
         ));

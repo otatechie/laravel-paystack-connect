@@ -25,16 +25,28 @@ function paidPayment(string $amount = '100.00'): Payment
     return $fake->pay(PaystackConnect::checkout()->amount($amount, 'GHS')->email('c@example.com')->create());
 }
 
-function refundWebhook(Payment $payment, int $amount, string $status = 'processed'): string
+function refundWebhook(Payment $payment, int $amount, string $status = 'processed', ?int $id = null): string
 {
     return json_encode(['event' => "refund.{$status}", 'data' => [
-        'id' => random_int(1, 999999),
+        'id' => $id ?? random_int(1, 999999),
         'status' => $status,
         'transaction_reference' => $payment->reference,
         'amount' => $amount,
         'currency' => $payment->currency,
     ]]);
 }
+
+it('records a checkout Paystack refused, with its reason', function () {
+    Http::fake(['api.paystack.co/transaction/initialize' => Http::response(['status' => false, 'message' => 'Currency not supported by merchant'], 403)]);
+
+    try {
+        PaystackConnect::checkout()->amount('50', 'ZAR')->email('c@example.com')->create();
+    } catch (PaystackException) {
+    }
+
+    expect(Payment::first()->status)->toBe(PaymentStatus::Failed)
+        ->and(Payment::first()->failure_reason)->toContain('Currency not supported');
+});
 
 it('asks Paystack for a full refund by default', function () {
     $payment = paidPayment();
@@ -111,14 +123,14 @@ it('counts a refund once when Paystack retries after a listener failed', functio
 it('holds back a requested refund until Paystack processes it', function () {
     $payment = paidPayment();
 
-    PaystackConnect::refund($payment, Money::major('40.00', 'GHS'));
+    $refund = PaystackConnect::refund($payment, Money::major('40.00', 'GHS'));
     $payment->refresh();
 
     expect($payment->pendingRefundAmount()->toMajorString())->toBe('40.00')
         ->and($payment->refundableAmount()->toMajorString())->toBe('60.00')
         ->and(fn () => PaystackConnect::refund($payment, Money::major('70.00', 'GHS')))->toThrow(InvalidAmount::class);
 
-    $this->postWebhook(refundWebhook($payment, 4000))->assertOk();
+    $this->postWebhook(refundWebhook($payment, 4000, id: $refund['id']))->assertOk();
     $payment->refresh();
 
     expect($payment->pendingRefundAmount()->isZero())->toBeTrue()
@@ -130,16 +142,38 @@ it('frees the amount again when Paystack fails a refund', function () {
     Event::fake([PaymentRefunded::class]);
     $payment = paidPayment();
 
-    PaystackConnect::refund($payment);
+    $refund = PaystackConnect::refund($payment);
     expect($payment->refresh()->refundableAmount()->isZero())->toBeTrue();
 
-    $this->postWebhook(refundWebhook($payment, 10000, 'failed'))->assertOk();
+    $this->postWebhook(refundWebhook($payment, 10000, 'failed', $refund['id']))->assertOk();
     $payment->refresh();
 
     expect($payment->pendingRefundAmount()->isZero())->toBeTrue()
         ->and($payment->refunded_amount)->toBe(0)
         ->and($payment->refundableAmount()->toMajorString())->toBe('100.00');
     Event::assertNotDispatched(PaymentRefunded::class);
+});
+
+it('keeps a hold when a different refund, made from the Paystack dashboard, is processed', function () {
+    $payment = paidPayment();
+    PaystackConnect::refund($payment, Money::major('40.00', 'GHS'));
+
+    // Someone refunds GHS 40 from the dashboard too. Its id is not the one we're waiting for.
+    $this->postWebhook(refundWebhook($payment, 4000))->assertOk();
+    $payment->refresh();
+
+    expect($payment->refundedAmount()->toMajorString())->toBe('40.00')
+        ->and($payment->pendingRefundAmount()->toMajorString())->toBe('40.00')
+        ->and($payment->refundableAmount()->toMajorString())->toBe('20.00');
+});
+
+it('checks what is refundable against the database, not a stale model', function () {
+    $payment = paidPayment();
+    $stale = Payment::find($payment->id);
+
+    $this->postWebhook(refundWebhook($payment, 10000))->assertOk(); // refunded in full elsewhere
+
+    expect(fn () => PaystackConnect::refund($stale))->toThrow(InvalidArgumentException::class);
 });
 
 it('ignores refunds for payments that were never paid', function () {

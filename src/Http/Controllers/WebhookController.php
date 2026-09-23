@@ -36,6 +36,19 @@ class WebhookController
             return response()->json(['status' => 'duplicate']);
         }
 
+        // Claim the event, so an overlapping delivery of the same payload is
+        // turned away instead of running listeners twice. A claim older than
+        // a minute belongs to a request that died, and can be taken over.
+        $claimed = WebhookEvent::query()
+            ->whereKey($event->id)
+            ->whereNull('processed_at')
+            ->where(fn ($query) => $query->whereNull('claimed_at')->orWhere('claimed_at', '<', now()->subMinute()))
+            ->update(['claimed_at' => now()]);
+
+        if (! $claimed) {
+            return response()->json(['status' => 'processing']);
+        }
+
         try {
             if ($payload['event'] === 'charge.success' && isset($payload['data'])) {
                 $payment = $reconciler->reconcile($payload['data']);
@@ -59,7 +72,7 @@ class WebhookController
 
             $event->update(['processed_at' => now(), 'error' => null]);
         } catch (Throwable $e) {
-            $event->update(['error' => $e->getMessage()]);
+            $event->update(['error' => $e->getMessage(), 'claimed_at' => null]);
 
             $this->log()->error('Paystack webhook processing failed; Paystack will retry.', [
                 'event' => $payload['event'],

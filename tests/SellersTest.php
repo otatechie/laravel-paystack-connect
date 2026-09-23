@@ -1,5 +1,6 @@
 <?php
 
+use Illuminate\Database\UniqueConstraintViolationException;
 use Illuminate\Http\Client\Request;
 use Illuminate\Support\Facades\Event;
 use Illuminate\Support\Facades\Http;
@@ -45,6 +46,38 @@ it('verifies the account holder and creates a subaccount with the bank code', fu
         && json_decode($request['metadata'], true) === ['owner_type' => Business::class, 'owner_id' => $business->id]);
 
     Event::assertDispatched(SubaccountConnected::class);
+});
+
+it('never exposes a seller\'s account number, even inside Paystack\'s data', function () {
+    PaystackConnect::fake();
+
+    $subaccount = Business::create(['name' => 'Kofi Prints'])
+        ->connectPaystackAccount(SettlementAccount::mobileMoney('Kofi Prints', 'MTN', '0241234567', 'GHS'));
+
+    expect(json_encode($subaccount))->not->toContain('0241234567')
+        ->and($subaccount->paystack_data)->not->toHaveKey('account_number')
+        ->and($subaccount->account_number)->toBe('0241234567'); // still readable in code
+});
+
+it('sees the new subaccount straight away, even if the relation was loaded before', function () {
+    fakeSubaccountApi();
+    $business = Business::create(['name' => 'Kofi Prints']);
+    expect($business->canReceivePaystackPayments())->toBeFalse(); // loads the relation as null
+
+    $business->connectPaystackAccount(SettlementAccount::bank('Kofi Prints', '300335', '1234567890', 'GHS'));
+
+    expect($business->canReceivePaystackPayments())->toBeTrue();
+});
+
+it('allows one subaccount per seller', function () {
+    $business = Business::create(['name' => 'Kofi Prints']);
+    $row = fn (string $code) => Subaccount::create([
+        'owner_type' => Business::class, 'owner_id' => $business->id, 'subaccount_code' => $code,
+        'business_name' => 'Kofi Prints', 'account_number' => '1', 'account_number_last4' => '1', 'currency' => 'GHS',
+    ]);
+
+    $row('ACCT_1');
+    expect(fn () => $row('ACCT_2'))->toThrow(UniqueConstraintViolationException::class);
 });
 
 it('never sends placeholder contact details', function () {
@@ -94,8 +127,15 @@ it('does not create a subaccount when Paystack cannot resolve the account', func
     expect(Subaccount::count())->toBe(0);
 });
 
-it('imports every page of existing subaccounts, not just the first 50', function () {
+it('imports every page of existing subaccounts, not just the first 100', function () {
     $business = Business::create(['name' => 'Kofi Prints']);
+
+    // Linked locally with attach(); Paystack's metadata knows nothing about it.
+    $linked = Business::create(['name' => 'Ama Foods']);
+    Subaccount::create([
+        'owner_type' => Business::class, 'owner_id' => $linked->id, 'subaccount_code' => 'ACCT_2',
+        'business_name' => 'Ama Foods', 'account_number' => '1', 'account_number_last4' => '1', 'currency' => 'GHS',
+    ]);
     $page = fn (int $from, int $to) => collect(range($from, $to))->map(fn ($i) => [
         'subaccount_code' => "ACCT_{$i}",
         'business_name' => "Seller {$i}",
@@ -116,8 +156,29 @@ it('imports every page of existing subaccounts, not just the first 50', function
     expect(PaystackConnect::subaccounts()->import())->toBe(130)
         ->and(Subaccount::count())->toBe(130)
         ->and($business->fresh()->paystackSubaccount->subaccount_code)->toBe('ACCT_1')
-        ->and(Subaccount::first()->settlement_bank)->toBe('300335')
-        ->and(Subaccount::first()->bank_name)->toBe('GCB Bank');
+        ->and($linked->fresh()->paystackSubaccount->subaccount_code)->toBe('ACCT_2')
+        ->and(Subaccount::where('subaccount_code', 'ACCT_1')->first()->settlement_bank)->toBe('300335')
+        ->and(Subaccount::where('subaccount_code', 'ACCT_1')->first()->bank_name)->toBe('GCB Bank');
+});
+
+it('attaches an imported subaccount to its seller and records the owner on Paystack', function () {
+    Http::fake(['api.paystack.co/subaccount/ACCT_old' => Http::response(['status' => true, 'data' => ['subaccount_code' => 'ACCT_old']])]);
+    $business = Business::create(['name' => 'Kofi Prints']);
+    Subaccount::create([
+        'subaccount_code' => 'ACCT_old', 'business_name' => 'Kofi Prints', 'account_number' => '0241234567',
+        'account_number_last4' => '4567', 'currency' => 'GHS',
+    ]);
+
+    $subaccount = PaystackConnect::subaccounts()->attach($business, 'ACCT_old');
+
+    expect($subaccount->owner->is($business))->toBeTrue()
+        ->and($business->fresh()->paystackSubaccount->subaccount_code)->toBe('ACCT_old');
+
+    Http::assertSent(fn (Request $request) => $request->method() === 'PUT'
+        && json_decode($request['metadata'], true) === ['owner_type' => Business::class, 'owner_id' => $business->id]);
+
+    expect(fn () => PaystackConnect::subaccounts()->attach($business, 'ACCT_missing'))
+        ->toThrow(InvalidArgumentException::class, 'import');
 });
 
 it('lists every bank by following Paystack\'s cursor', function () {

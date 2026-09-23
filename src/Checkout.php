@@ -93,8 +93,13 @@ class Checkout
         return $this;
     }
 
+    /** Letters, digits, "-", ".", "=" and "_" only: Paystack refuses anything else. */
     public function reference(string $reference): self
     {
+        if (! preg_match('/^[A-Za-z0-9\-.=_]+$/', $reference)) {
+            throw new InvalidArgumentException("Reference \"{$reference}\" can only contain letters, digits, \"-\", \".\", \"=\" and \"_\".");
+        }
+
         $this->reference = $reference;
 
         return $this;
@@ -157,6 +162,14 @@ class Checkout
 
         if (! $this->email) {
             throw new InvalidArgumentException('Set the customer email.');
+        }
+
+        if ($this->subaccount && $this->subaccount->currency !== $this->amount->currency) {
+            throw new InvalidArgumentException("This seller's account settles in {$this->subaccount->currency}, so it can't receive a {$this->amount->currency} payment.");
+        }
+
+        if ($this->reference && Payment::query()->where('reference', $this->reference)->exists()) {
+            throw new InvalidArgumentException("A payment with reference {$this->reference} already exists. Use a new reference for each checkout.");
         }
 
         $fee = Money::minor(0, $this->amount->currency);

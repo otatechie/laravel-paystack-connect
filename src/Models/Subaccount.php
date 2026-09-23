@@ -30,7 +30,8 @@ class Subaccount extends Model
 
     protected $guarded = [];
 
-    protected $hidden = ['account_number'];
+    // Raw Paystack data stays out of JSON too; read it in code when you need it.
+    protected $hidden = ['account_number', 'paystack_data'];
 
     protected function casts(): array
     {

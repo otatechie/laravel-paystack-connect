@@ -1,5 +1,9 @@
 # Laravel Paystack Connect
 
+[![Tests](https://github.com/otatechie/laravel-paystack-connect/actions/workflows/tests.yml/badge.svg)](https://github.com/otatechie/laravel-paystack-connect/actions/workflows/tests.yml)
+[![Latest release](https://img.shields.io/github/v/release/otatechie/laravel-paystack-connect?include_prereleases&label=release)](https://github.com/otatechie/laravel-paystack-connect/releases)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE.md)
+
 Marketplace payments for Laravel on Paystack. Your customers pay a seller, the
 seller's share settles straight to their bank or mobile money wallet, and your
 platform keeps a fee.
@@ -23,14 +27,42 @@ onboarding, fee rules, local records, and webhooks you can trust.
 - **Nothing fails silently.** Every Paystack error throws with Paystack's own
   message, and webhook failures are logged and retried.
 
+> **Beta.** The package is in beta while it's proven in a production app. The
+> API and the migration may still change before `v1.0.0`.
+
+**What it doesn't do:** each payment goes to one seller, so a cart with
+several sellers needs one payment per seller. Payouts to sellers happen
+through Paystack's settlements, not this package, and disputes are only
+surfaced as raw `WebhookReceived` events. For anything else Paystack offers,
+`PaystackConnect::client()` gives you an authenticated client for its API.
+
+**Contents:** [Installation](#installation) ·
+[Onboard a seller](#onboard-a-seller) · [Take a payment](#take-a-payment) ·
+[React to payments](#react-to-payments) · [Refunds](#refunds) · [Fees](#fees) ·
+[Currencies](#currencies) · [Moving an existing app over](#moving-an-existing-app-over) ·
+[Testing your app](#testing-your-app) ·
+[Trying it against Paystack's test mode](#trying-it-against-paystacks-test-mode) ·
+[Security](#security)
+
 ## Requirements
 
 PHP 8.3+ and Laravel 12 or 13.
 
 ## Installation
 
+The package isn't on Packagist yet, so add this repository to your app's
+`composer.json` first:
+
+```json
+"repositories": [
+    { "type": "vcs", "url": "https://github.com/otatechie/laravel-paystack-connect" }
+]
+```
+
+Then install it and publish the migration and config:
+
 ```bash
-composer require otatechie/laravel-paystack-connect
+composer require otatechie/laravel-paystack-connect:^1.0@beta
 php artisan vendor:publish --tag="paystack-connect-migrations"
 php artisan migrate
 php artisan vendor:publish --tag="paystack-connect-config"
@@ -41,6 +73,8 @@ Add your keys to `.env`:
 ```env
 PAYSTACK_SECRET_KEY=sk_test_xxx
 PAYSTACK_PUBLIC_KEY=pk_test_xxx
+
+# Your Paystack account's currency: GHS, NGN, KES, ZAR, XOF, EGP or RWF
 PAYSTACK_CURRENCY=GHS
 ```
 
@@ -94,6 +128,105 @@ is created. Paystack has no such lookup in other countries, so there it checks
 the account itself when the subaccount is created. To skip the lookup, set
 `sellers.verify_accounts` to `false`.
 
+### An onboarding page
+
+Paystack has no hosted onboarding, so sellers connect their account on a page
+in your app. The package ships no views; here's a minimal one to copy and
+adapt, whether you use Blade, Inertia or Livewire.
+
+```php
+use Illuminate\Http\Request;
+use Illuminate\Validation\ValidationException;
+use Otatechie\PaystackConnect\Banks;
+use Otatechie\PaystackConnect\Exceptions\PaystackException;
+use Otatechie\PaystackConnect\Facades\PaystackConnect;
+use Otatechie\PaystackConnect\Support\SettlementAccount;
+
+class PayoutAccountController
+{
+    // Your Paystack account's currency, and Paystack's name for its country:
+    // GHS → "ghana", NGN → "nigeria", KES → "kenya", and so on.
+    private function currency(): string
+    {
+        return strtoupper(config('paystack-connect.currency'));
+    }
+
+    private function country(): string
+    {
+        return Banks::COUNTRIES[$this->currency()];
+    }
+
+    public function edit()
+    {
+        return view('payout-account', [
+            'banks' => PaystackConnect::banks()->list($this->country())->sortBy('name'),
+        ]);
+    }
+
+    public function update(Request $request)
+    {
+        $data = $request->validate([
+            'bank_code' => ['required', 'string'],
+            'account_number' => ['required', 'string'],
+        ]);
+
+        $bank = PaystackConnect::banks()->find($this->country(), $data['bank_code'])
+            ?? throw ValidationException::withMessages(['bank_code' => 'Pick a bank or network from the list.']);
+
+        $business = $request->user()->business;
+
+        $account = $bank['type'] === 'mobile_money'
+            ? SettlementAccount::mobileMoney($business->name, $bank['code'], $data['account_number'], $this->currency(), $bank['name'])
+            : SettlementAccount::bank($business->name, $bank['code'], $data['account_number'], $this->currency(), $bank['name']);
+
+        try {
+            $business->connectPaystackAccount($account->withContact(email: $request->user()->email));
+        } catch (PaystackException $e) {
+            // For example "Could not resolve account name" for a mistyped number.
+            return back()->withInput()->withErrors(['account_number' => $e->getMessage()]);
+        }
+
+        return back()->with('status', 'Payout account connected.');
+    }
+}
+```
+
+```blade
+<form method="POST" action="{{ route('payout-account.update') }}">
+    @csrf
+    @method('PUT')
+
+    <select name="bank_code" required>
+        @foreach ($banks as $bank)
+            <option value="{{ $bank['code'] }}">{{ $bank['name'] }}</option>
+        @endforeach
+    </select>
+
+    <input name="account_number" placeholder="Account or mobile money number" required>
+    @error('account_number') <p>{{ $message }}</p> @enderror
+
+    <button>Connect payout account</button>
+</form>
+```
+
+If your sellers are in several countries, let them pick a country first and
+use it in place of `country()`.
+
+Submitting the form again updates the same subaccount.
+
+### The subaccount record
+
+`$business->paystackSubaccount` is a `Subaccount` model, stored in
+`paystack_subaccounts`.
+
+| Field or method | Meaning |
+|---|---|
+| `subaccount_code` | Paystack's code for the subaccount, `ACCT_...`. |
+| `business_name`, `bank_name`, `account_name` | What was connected, and the holder's name where Paystack looks it up. |
+| `maskedAccountNumber()` | `"•••• 4567"`, for display. The full number is encrypted at rest and never included in JSON. |
+| `active` | Whether Paystack will settle to it. `canReceivePaystackPayments()` checks this. |
+| `owner`, `payments()` | The seller model, and every payment made to them. |
+
 ## Take a payment
 
 ```php
@@ -123,12 +256,52 @@ The fee comes from your config. To override it for one payment, use
 `->fee('10.00')`. To choose who pays Paystack's own fee, use
 `->bearer('subaccount')`.
 
-On your callback page, confirm the payment straight away:
+Other options:
+
+```php
+->channels(['card', 'mobile_money'])   // limit how the customer can pay
+->metadata(['order_id' => $order->id]) // sent to Paystack, shown in its dashboard
+->reference('INV-2026-0042')           // your own reference; must be unique
+```
+
+Channels Paystack accepts: `card`, `bank`, `apple_pay`, `ussd`, `qr`,
+`mobile_money`, `bank_transfer`, `eft`, `capitec_pay` and `payattitude`; which
+ones the customer sees depends on their country. A reference may contain only
+letters, digits, `-`, `.`, `=` and `_`.
+
+Without `->seller()`, the whole amount goes to your own Paystack balance and
+no fee is taken.
+
+### The payment record
+
+`create()` returns a `Payment` model, stored in `paystack_payments`. Amounts
+are in minor units; the helpers give you `Money` objects.
+
+| Field or method | Meaning |
+|---|---|
+| `reference` | Sent to Paystack. Generated as `pc_...` unless you set one. |
+| `status` | `pending`, `success`, `failed`, `amount_mismatch` or `refunded` (a `PaymentStatus` enum). |
+| `total()`, `platformFee()`, `sellerShare()` | What the customer paid, your fee, and the seller's share before Paystack's own fee. |
+| `paystack_fee` | Paystack's fee, once the payment has succeeded. |
+| `channel`, `paid_at` | How and when the customer paid. |
+| `failure_reason` | Paystack's reason when a payment failed. |
+| `payable`, `subaccount` | The model being paid for, and the seller's subaccount. |
+| `paystack_data` | Paystack's full transaction data, for anything else you need. |
+
+`access_code` and `paystack_data` are left out of the model's JSON: one opens
+the checkout, the other holds card and customer details.
+
+On your callback page, confirm the payment straight away. `verify()` returns
+`null` when no payment has that reference:
 
 ```php
 $payment = PaystackConnect::verify($request->query('reference'));
 
-$payment->isSuccessful();
+if ($payment?->isSuccessful()) {
+    return redirect()->route('invoices.show', $payment->payable)->with('status', 'Paid, thank you.');
+}
+
+return redirect()->route('invoices.index')->with('error', 'The payment did not go through.');
 ```
 
 The webhook is still the source of truth. Verifying and the webhook both
@@ -156,13 +329,26 @@ Event::listen(function (PaymentSucceeded $event) {
 | `SubaccountConnected` | A seller's subaccount was created or updated. |
 | `WebhookReceived` | Any verified webhook, including events this package doesn't handle itself. |
 
+To handle an event the package doesn't, such as a dispute, listen for
+`WebhookReceived`. It carries the event name and Paystack's full payload:
+
+```php
+use Otatechie\PaystackConnect\Events\WebhookReceived;
+
+Event::listen(function (WebhookReceived $event) {
+    if ($event->event === 'charge.dispute.create') {
+        // $event->payload['data'] ...
+    }
+});
+```
+
 A checkout the customer hasn't paid yet stays `pending`, even though Paystack
 reports it as "abandoned": they can still come back and pay. To clean up old
 unpaid checkouts, query pending payments older than you care about.
 
-Listeners run once per payment, even when Paystack retries a webhook. If a
-listener throws, the webhook returns an error, the event is kept, and
-Paystack's next retry processes it again. In live mode Paystack retries every
+Listeners run once per payment, even when Paystack retries a webhook or two
+deliveries overlap. If a listener throws, the webhook returns an error, the
+event is kept, and Paystack's next retry processes it again. In live mode Paystack retries every
 3 minutes for the first 4 tries, then hourly for 72 hours; in test mode,
 hourly for 10 hours. You can also resend events from the Paystack dashboard.
 
@@ -177,8 +363,9 @@ PaystackConnect::refund($payment, Money::major('50.00', 'GHS'));    // part of i
 ```
 
 Paystack processes refunds in the background, which can take a while. Until
-it does, the amount is held as pending, so the same money can't be refunded
-twice. When the `refund.processed` webhook arrives, the payment's
+it does, the amount is held as pending (per refund, by Paystack's refund id),
+so the same money can't be refunded twice. Refunds made from the Paystack
+dashboard are recorded too when their webhook arrives. When the `refund.processed` webhook arrives, the payment's
 `refunded_amount` goes up and `PaymentRefunded` is dispatched. Once the whole
 amount is back, the status becomes `refunded`. If Paystack fails the refund
 (`refund.failed`), the amount can be refunded again. If Paystack needs the
@@ -204,8 +391,12 @@ $payment->isRefunded();          // false until everything is back
 ```
 
 Amounts are in major units (GHS 5, not 500 pesewas). A currency without its
-own rule uses the default alone. Payments without a seller have no fee. To
-preview a fee:
+own rule uses the default alone. Payments without a seller have no fee.
+
+The fee is never more than the payment, which means a payment below the
+minimum fee goes entirely to you: a GHS 2 payment with a GHS 5 minimum leaves
+the seller with nothing. If sellers sell cheap items, set a lower minimum or
+enforce a minimum price. To preview a fee:
 
 ```php
 PaystackConnect::feeFor(Money::major('100.00', 'GHS')); // GHS 5.00
@@ -244,7 +435,14 @@ php artisan paystack-connect:import-subaccounts
 ```
 
 Subaccounts created by this package carry their owner in Paystack's metadata,
-so they are linked to the right model. To see bank and network codes:
+so they are linked to the right model. Older ones are imported without an
+owner; link each to its seller, which also records the owner on Paystack:
+
+```php
+PaystackConnect::subaccounts()->attach($business, 'ACCT_8f4s1eq7ml6rlzj');
+```
+
+To see bank and network codes:
 
 ```bash
 php artisan paystack-connect:banks ghana --type=mobile_money
@@ -280,6 +478,7 @@ it('marks the invoice paid', function () {
 | `assertCheckoutCreated(?callable)` | A checkout was started. The callback receives what was sent to Paystack. |
 | `assertSubaccountCreated(?callable)` | A seller's subaccount was created. |
 | `assertNothingSent()` | Nothing was sent to Paystack. |
+| `requests()` | Everything sent to Paystack, for assertions of your own. |
 
 The fake throws on any other endpoint. For those, use `Http::fake()`.
 
@@ -298,10 +497,19 @@ The fake throws on any other endpoint. For those, use `Http::fake()`.
 
 ## Security
 
-Every webhook's signature is checked. To also accept webhooks only from
-Paystack's servers, uncomment their IP addresses under `webhook.allowed_ips`
-in the config. If your app sits behind a proxy or load balancer, set up
-Laravel's trusted proxies first, or every webhook will be rejected.
+Every webhook's signature is checked against the raw request body. To also
+accept webhooks only from Paystack's servers, uncomment their IP addresses
+under `webhook.allowed_ips` in the config. If your app sits behind a proxy or
+load balancer, set up Laravel's trusted proxies first, or every webhook will
+be rejected.
+
+To add middleware in front of the webhook, such as a throttle, list it under
+`webhook.middleware`. To register the route yourself, set `webhook.enabled`
+to `false` and point your route at `WebhookController`, keeping the
+`VerifyPaystackSignature` middleware.
+
+Sellers' account numbers are encrypted in the database and left out of the
+model's JSON. Only the last four digits are stored in the clear, for display.
 
 ## Contributing
 
@@ -313,4 +521,4 @@ composer format
 
 ## License
 
-MIT
+MIT. See [LICENSE.md](LICENSE.md).

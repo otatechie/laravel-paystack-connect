@@ -8,6 +8,7 @@ use Otatechie\PaystackConnect\Events\PaymentAmountMismatch;
 use Otatechie\PaystackConnect\Events\PaymentFailed;
 use Otatechie\PaystackConnect\Events\PaymentSucceeded;
 use Otatechie\PaystackConnect\Events\WebhookReceived;
+use Otatechie\PaystackConnect\Exceptions\PaystackException;
 use Otatechie\PaystackConnect\Facades\PaystackConnect;
 use Otatechie\PaystackConnect\Models\Payment;
 use Otatechie\PaystackConnect\Models\Subaccount;
@@ -166,6 +167,25 @@ it('retries processing when a listener failed the first time', function () {
     expect(WebhookEvent::first()->processed_at)->not->toBeNull();
 });
 
+it('turns away an overlapping delivery while the first is still being processed', function () {
+    Event::fake([PaymentSucceeded::class]);
+    $payment = PaystackConnect::checkout()->amount('50')->email('c@example.com')->create();
+    $body = chargeSuccess($payment);
+
+    // Another request is processing this exact payload right now.
+    WebhookEvent::create(['event' => 'charge.success', 'payload_hash' => hash('sha256', $body), 'payload' => json_decode($body, true), 'claimed_at' => now()]);
+
+    $this->postWebhook($body)->assertJson(['status' => 'processing']);
+    expect($payment->refresh()->status)->toBe(PaymentStatus::Pending);
+    Event::assertNotDispatched(PaymentSucceeded::class);
+
+    // A claim older than a minute belongs to a request that died; take it over.
+    WebhookEvent::query()->update(['claimed_at' => now()->subMinutes(2)]);
+
+    $this->postWebhook($body)->assertJson(['status' => 'ok']);
+    expect($payment->refresh()->status)->toBe(PaymentStatus::Success);
+});
+
 it('acknowledges charges it did not create without failing', function () {
     $this->postWebhook(json_encode(['event' => 'charge.success', 'data' => [
         'reference' => 'made-elsewhere', 'status' => 'success', 'amount' => 100, 'currency' => 'GHS',
@@ -225,12 +245,97 @@ it('marks a payment paid when the customer succeeds after a declined attempt', f
 });
 
 it('applies a fee set before the amount in the amount\'s currency', function () {
+    $lagos = Business::create(['name' => 'Ade Stores']);
+    Subaccount::create([
+        'owner_type' => Business::class, 'owner_id' => $lagos->id, 'subaccount_code' => 'ACCT_ade', 'business_name' => 'Ade Stores',
+        'settlement_bank' => '058', 'account_number' => '0123456789', 'account_number_last4' => '6789', 'currency' => 'NGN',
+    ]);
+
     $payment = PaystackConnect::checkout()
         ->fee('10.00')
         ->amount('100.00', 'NGN')
         ->email('c@example.com')
-        ->seller($this->business)
+        ->seller($lagos)
         ->create();
 
     expect($payment->platformFee()->equals(Money::major('10.00', 'NGN')))->toBeTrue();
 });
+
+it('refuses to send a seller money in a currency their account does not use', function () {
+    PaystackConnect::checkout()->amount('100.00', 'NGN')->email('c@example.com')->seller($this->business)->create();
+})->throws(InvalidArgumentException::class, 'GHS');
+
+it('sends the optional checkout details to Paystack', function () {
+    $payment = PaystackConnect::checkout()
+        ->amount('50')->email('c@example.com')->seller($this->business)
+        ->reference('INV-42')
+        ->bearer('subaccount')
+        ->channels(['mobile_money'])
+        ->metadata(['order_id' => 7])
+        ->create();
+
+    expect($payment->reference)->toBe('INV-42')
+        ->and($payment->metadata)->toBe(['order_id' => 7]);
+
+    Http::assertSent(fn (Request $request) => $request['reference'] === 'INV-42'
+        && $request['bearer'] === 'subaccount'
+        && $request['channels'] === ['mobile_money']
+        && json_decode($request['metadata'], true)['order_id'] === 7);
+});
+
+it('refuses a reference Paystack would reject', function () {
+    PaystackConnect::checkout()->reference('INV/42');
+})->throws(InvalidArgumentException::class, 'INV/42');
+
+it('explains a duplicate reference instead of failing on the database', function () {
+    PaystackConnect::checkout()->amount('50')->email('c@example.com')->reference('INV-42')->create();
+    PaystackConnect::checkout()->amount('50')->email('c@example.com')->reference('INV-42')->create();
+})->throws(InvalidArgumentException::class, 'INV-42');
+
+it('keeps checkout secrets and raw Paystack data out of JSON', function () {
+    $payment = PaystackConnect::checkout()->amount('50')->email('c@example.com')->create();
+    $this->postWebhook(chargeSuccess($payment))->assertOk();
+
+    $json = json_encode($payment->refresh());
+
+    expect($json)->not->toContain('"access_code"')
+        ->and($json)->not->toContain('"paystack_data"')
+        ->and($json)->not->toContain('receipt_url')
+        ->and($json)->toContain('"status":"success"');
+});
+
+it('marks a payment paid when Paystack added its fee on top for the customer', function () {
+    Event::fake([PaymentSucceeded::class]);
+    $payment = PaystackConnect::checkout()->amount('50')->email('c@example.com')->create();
+
+    // With "charge customer the fee" on, amount is what was taken; requested_amount is what we asked for.
+    $this->postWebhook(chargeSuccess($payment, ['amount' => 5098, 'requested_amount' => 5000]))->assertOk();
+
+    expect($payment->refresh()->status)->toBe(PaymentStatus::Success);
+    Event::assertDispatched(PaymentSucceeded::class);
+});
+
+it('does not decide a payment from a payload with no amount', function () {
+    $payment = PaystackConnect::checkout()->amount('50')->email('c@example.com')->create();
+    $data = json_decode(chargeSuccess($payment), true);
+    unset($data['data']['amount']);
+
+    $this->postWebhook(json_encode($data))->assertStatus(500);
+
+    expect($payment->refresh()->status)->toBe(PaymentStatus::Pending)
+        ->and(WebhookEvent::first()->error)->toContain('amount');
+});
+
+it('only accepts webhooks from the allowed IPs when a list is set', function () {
+    config()->set('paystack-connect.webhook.allowed_ips', ['52.31.139.75']);
+    $payment = PaystackConnect::checkout()->amount('50')->email('c@example.com')->create();
+
+    $this->postWebhook(chargeSuccess($payment))->assertForbidden(); // the test client comes from 127.0.0.1
+    expect($payment->refresh()->status)->toBe(PaymentStatus::Pending);
+});
+
+it('turns a non-JSON reply from Paystack into a PaystackException', function () {
+    Http::fake(['api.paystack.co/transaction/verify/*' => Http::response('<html>Bad gateway</html>', 200)]);
+
+    PaystackConnect::verify('anything');
+})->throws(PaystackException::class);

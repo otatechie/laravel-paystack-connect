@@ -3,6 +3,7 @@
 namespace Otatechie\PaystackConnect;
 
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Otatechie\PaystackConnect\Enums\PaymentStatus;
 use Otatechie\PaystackConnect\Events\PaymentAmountMismatch;
 use Otatechie\PaystackConnect\Events\PaymentFailed;
@@ -10,6 +11,7 @@ use Otatechie\PaystackConnect\Events\PaymentRefunded;
 use Otatechie\PaystackConnect\Events\PaymentSucceeded;
 use Otatechie\PaystackConnect\Models\Payment;
 use Otatechie\PaystackConnect\Support\Money;
+use RuntimeException;
 
 /**
  * Applies what Paystack says about a transaction to the matching payment.
@@ -41,7 +43,15 @@ class PaymentReconciler
             $status = $transaction['status'] ?? null;
 
             if ($status === 'success') {
-                $amountMatches = (int) $transaction['amount'] === $payment->amount
+                if (! isset($transaction['amount'], $transaction['currency'])) {
+                    throw new RuntimeException('Paystack reported a successful charge without an amount or currency; not settling the payment.');
+                }
+
+                // When the merchant passes Paystack's fee on to the customer,
+                // "amount" includes it and "requested_amount" is what we asked for.
+                $charged = (int) ($transaction['requested_amount'] ?? $transaction['amount']);
+
+                $amountMatches = $charged === $payment->amount
                     && strtoupper((string) $transaction['currency']) === $payment->currency;
 
                 if (! $amountMatches) {
@@ -114,7 +124,6 @@ class PaymentReconciler
 
             $payment->update([
                 'refunded_amount' => $refunded,
-                'refund_pending' => max(0, $payment->refund_pending - $amount),
                 'refunded_at' => now(),
                 'status' => $refunded >= $payment->amount ? PaymentStatus::Refunded : $payment->status,
             ]);
@@ -130,11 +139,7 @@ class PaymentReconciler
      */
     public function releaseRefund(array $refund): ?Payment
     {
-        return $this->applyRefund($refund, function (Payment $payment, int $amount) {
-            $payment->update(['refund_pending' => max(0, $payment->refund_pending - $amount)]);
-
-            return null;
-        });
+        return $this->applyRefund($refund, fn () => null);
     }
 
     /**
@@ -154,7 +159,15 @@ class PaymentReconciler
                 ->lockForUpdate()
                 ->first();
 
-            if (! $payment || ! in_array($payment->status, [PaymentStatus::Success, PaymentStatus::Refunded], true)) {
+            if (! $payment) {
+                return null;
+            }
+
+            if (! in_array($payment->status, [PaymentStatus::Success, PaymentStatus::Refunded], true)) {
+                Log::channel(config('paystack-connect.log_channel'))->warning('Paystack sent a refund for a payment that is not marked paid; it was not recorded.', [
+                    'reference' => $payment->reference, 'status' => $payment->status->value, 'refund_id' => $refund['id'] ?? null,
+                ]);
+
                 return $payment;
             }
 
@@ -167,9 +180,15 @@ class PaymentReconciler
 
             $event = $apply($payment, (int) ($refund['amount'] ?? 0));
 
-            if ($refundId !== null) {
-                $payment->update(['refund_ids' => [...$refundIds, $refundId]]);
-            }
+            // Whether processed or failed, this refund is no longer pending.
+            // A refund we never requested (made from the dashboard) holds nothing.
+            $pending = $payment->pending_refunds ?? [];
+            unset($pending[$refundId]);
+
+            $payment->update([
+                'pending_refunds' => $pending ?: null,
+                'refund_ids' => $refundId !== null ? [...$refundIds, $refundId] : $refundIds,
+            ]);
 
             return $payment;
         });

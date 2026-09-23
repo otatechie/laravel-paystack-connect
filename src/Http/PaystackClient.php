@@ -72,10 +72,12 @@ class PaystackClient
             throw PaystackException::unreachable($method, $uri, $e);
         }
 
-        if ($response->failed() || $response->json('status') !== true) {
+        $body = $response->json();
+
+        if ($response->failed() || ! is_array($body) || ($body['status'] ?? null) !== true) {
             throw PaystackException::fromResponse($method, $uri, $response);
         }
 
-        return $response->json();
+        return $body;
     }
 }

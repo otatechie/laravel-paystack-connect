@@ -38,6 +38,8 @@ return [
     |
     */
 
+    // Supported: GHS (Ghana), NGN (Nigeria), KES (Kenya), ZAR (South Africa),
+    // XOF (Côte d'Ivoire), EGP (Egypt), RWF (Rwanda), and USD where enabled.
     'currency' => env('PAYSTACK_CURRENCY', 'GHS'),
 
     /*

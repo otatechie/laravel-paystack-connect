@@ -32,7 +32,7 @@ use Otatechie\PaystackConnect\Support\Money;
  * @property Carbon|null $paid_at
  * @property int $refunded_amount
  * @property Carbon|null $refunded_at
- * @property int $refund_pending Refunds requested but not yet processed by Paystack.
+ * @property array<int|string, int>|null $pending_refunds Refunds requested but not yet processed, by Paystack refund id.
  * @property list<int|string>|null $refund_ids Paystack ids of the refunds already recorded.
  */
 class Payment extends Model
@@ -40,6 +40,9 @@ class Payment extends Model
     protected $table = 'paystack_payments';
 
     protected $guarded = [];
+
+    // access_code opens the checkout; paystack_data holds card and customer details.
+    protected $hidden = ['access_code', 'paystack_data'];
 
     protected function casts(): array
     {
@@ -52,7 +55,7 @@ class Payment extends Model
             'paystack_data' => 'array',
             'paid_at' => 'datetime',
             'refunded_amount' => 'integer',
-            'refund_pending' => 'integer',
+            'pending_refunds' => 'array',
             'refunded_at' => 'datetime',
             'refund_ids' => 'array',
         ];
@@ -98,7 +101,7 @@ class Payment extends Model
     /** Refunds requested from Paystack that it hasn't processed yet. */
     public function pendingRefundAmount(): Money
     {
-        return Money::minor($this->refund_pending, $this->currency);
+        return Money::minor((int) array_sum($this->pending_refunds ?? []), $this->currency);
     }
 
     /** What can still be refunded: not refunded, and not already requested. */

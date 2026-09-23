@@ -11,6 +11,7 @@ return new class extends Migration
         Schema::create('paystack_subaccounts', function (Blueprint $table) {
             $table->id();
             $table->nullableMorphs('owner');
+            $table->unique(['owner_type', 'owner_id']);
             $table->string('subaccount_code')->unique();
             $table->string('business_name');
             $table->string('settlement_bank')->nullable();
@@ -46,7 +47,7 @@ return new class extends Migration
             $table->json('paystack_data')->nullable();
             $table->timestamp('paid_at')->nullable();
             $table->unsignedBigInteger('refunded_amount')->default(0);
-            $table->unsignedBigInteger('refund_pending')->default(0);
+            $table->json('pending_refunds')->nullable();
             $table->timestamp('refunded_at')->nullable();
             $table->json('refund_ids')->nullable();
             $table->timestamps();
@@ -57,6 +58,7 @@ return new class extends Migration
             $table->string('event')->index();
             $table->string('payload_hash', 64)->unique();
             $table->json('payload');
+            $table->timestamp('claimed_at')->nullable();
             $table->timestamp('processed_at')->nullable();
             $table->text('error')->nullable();
             $table->timestamps();
