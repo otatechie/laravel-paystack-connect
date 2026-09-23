@@ -4,6 +4,11 @@ All notable changes to this package are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow
 [Semantic Versioning](https://semver.org/).
 
+## Unreleased
+
+### Changed
+- The package is on Packagist; installing no longer needs a `repositories` entry.
+
 ## 1.0.0-beta.2 — 2026-09-23
 
 ### Added

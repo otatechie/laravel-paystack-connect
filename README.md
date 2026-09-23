@@ -1,7 +1,7 @@
 # Laravel Paystack Connect
 
 [![Tests](https://github.com/otatechie/laravel-paystack-connect/actions/workflows/tests.yml/badge.svg)](https://github.com/otatechie/laravel-paystack-connect/actions/workflows/tests.yml)
-[![Latest release](https://img.shields.io/github/v/release/otatechie/laravel-paystack-connect?include_prereleases&label=release)](https://github.com/otatechie/laravel-paystack-connect/releases)
+[![Latest version](https://img.shields.io/packagist/v/otatechie/laravel-paystack-connect?include_prereleases)](https://packagist.org/packages/otatechie/laravel-paystack-connect)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE.md)
 
 Marketplace payments for Laravel on Paystack. Your customers pay a seller, the
@@ -50,16 +50,7 @@ PHP 8.3+ and Laravel 12 or 13.
 
 ## Installation
 
-The package isn't on Packagist yet, so add this repository to your app's
-`composer.json` first:
-
-```json
-"repositories": [
-    { "type": "vcs", "url": "https://github.com/otatechie/laravel-paystack-connect" }
-]
-```
-
-Then install it and publish the migration and config:
+Install it while it's in beta, then publish the migration and config:
 
 ```bash
 composer require otatechie/laravel-paystack-connect:^1.0@beta
