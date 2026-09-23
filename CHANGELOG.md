@@ -8,6 +8,11 @@ All notable changes to this package are recorded here. The format follows
 
 ### Changed
 - The package is on Packagist; installing no longer needs a `repositories` entry.
+- CI also tests PHP 8.5 on Laravel 13.
+
+### Documentation
+- Claims about Paystack link to the Paystack documentation they come from, with a "Paystack references" section.
+- The test card line no longer mentions a PIN and OTP, which Paystack doesn't document for that card.
 
 ## 1.0.0-beta.2 — 2026-09-23
 

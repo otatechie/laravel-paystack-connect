@@ -31,7 +31,9 @@ onboarding, fee rules, local records, and webhooks you can trust.
 > API and the migration may still change before `v1.0.0`.
 
 **What it doesn't do:** each payment goes to one seller, so a cart with
-several sellers needs one payment per seller. Payouts to sellers happen
+several sellers needs one payment per seller (or Paystack's
+[multi-split payments](https://paystack.com/docs/payments/multi-split-payments/), which this package
+doesn't wrap yet). Payouts to sellers happen
 through Paystack's settlements, not this package, and disputes are only
 surfaced as raw `WebhookReceived` events. For anything else Paystack offers,
 `PaystackConnect::client()` gives you an authenticated client for its API.
@@ -46,7 +48,7 @@ surfaced as raw `WebhookReceived` events. For anything else Paystack offers,
 
 ## Requirements
 
-PHP 8.3+ and Laravel 12 or 13.
+PHP 8.3+ and Laravel 12 or 13. PHP 8.5 is supported on Laravel 13.
 
 ## Installation
 
@@ -114,7 +116,7 @@ $business->canReceivePaystackPayments(); // true
 ```
 
 In Ghana and Nigeria, the account holder's name is checked with Paystack
-first. If it can't be resolved, a `PaystackException` explains why and nothing
+first ([Paystack only offers this lookup there](https://paystack.com/docs/identity-verification/verify-account-number/)). If it can't be resolved, a `PaystackException` explains why and nothing
 is created. Paystack has no such lookup in other countries, so there it checks
 the account itself when the subaccount is created. To skip the lookup, set
 `sellers.verify_accounts` to `false`.
@@ -243,9 +245,11 @@ instead:
 return Inertia::location($payment->authorization_url);
 ```
 
-The fee comes from your config. To override it for one payment, use
-`->fee('10.00')`. To choose who pays Paystack's own fee, use
-`->bearer('subaccount')`.
+The fee comes from your config and is sent to Paystack as the transaction's
+`transaction_charge`, a flat amount that goes to your account whatever the
+subaccount's percentage says ([split payments](https://paystack.com/docs/payments/split-payments/)).
+To override it for one payment, use `->fee('10.00')`. To choose who pays
+Paystack's own fee, use `->bearer('subaccount')`.
 
 Other options:
 
@@ -258,7 +262,8 @@ Other options:
 Channels Paystack accepts: `card`, `bank`, `apple_pay`, `ussd`, `qr`,
 `mobile_money`, `bank_transfer`, `eft`, `capitec_pay` and `payattitude`; which
 ones the customer sees depends on their country. A reference may contain only
-letters, digits, `-`, `.`, `=` and `_`.
+letters, digits, `-`, `.`, `=` and `_` ([Transaction API](https://paystack.com/docs/api/transaction/);
+`_` isn't listed there, but Paystack accepts it).
 
 Without `->seller()`, the whole amount goes to your own Paystack balance and
 no fee is taken.
@@ -334,14 +339,16 @@ Event::listen(function (WebhookReceived $event) {
 ```
 
 A checkout the customer hasn't paid yet stays `pending`, even though Paystack
-reports it as "abandoned": they can still come back and pay. To clean up old
+reports it as "abandoned" ([verify payments](https://paystack.com/docs/payments/verify-payments/)):
+they can still come back and pay. To clean up old
 unpaid checkouts, query pending payments older than you care about.
 
 Listeners run once per payment, even when Paystack retries a webhook or two
 deliveries overlap. If a listener throws, the webhook returns an error, the
 event is kept, and Paystack's next retry processes it again. In live mode Paystack retries every
 3 minutes for the first 4 tries, then hourly for 72 hours; in test mode,
-hourly for 10 hours. You can also resend events from the Paystack dashboard.
+hourly for 10 hours. You can also resend events from the Paystack dashboard
+([webhooks](https://paystack.com/docs/payments/webhooks/)).
 
 Paystack gives each delivery 30 seconds, so keep listeners quick and queue
 slow work such as emails, as above.
@@ -361,7 +368,8 @@ dashboard are recorded too when their webhook arrives. When the `refund.processe
 amount is back, the status becomes `refunded`. If Paystack fails the refund
 (`refund.failed`), the amount can be refunded again. If Paystack needs the
 customer's bank details first (`refund.needs-attention`), the refund stays
-pending until you provide them through Paystack's retry endpoint or dashboard.
+pending until you provide them through Paystack's retry endpoint or dashboard
+([refunds](https://paystack.com/docs/payments/refunds/)).
 
 ```php
 $payment->pendingRefundAmount(); // GHS 50.00 until Paystack processes it
@@ -399,7 +407,9 @@ set to `account`). Set it to `subaccount` to have sellers pay it instead.
 ## Currencies
 
 Each Paystack account charges in its own country's currency, plus USD in some
-countries if Paystack has enabled it for you. Anything else is refused with
+countries if Paystack has enabled it for you. Minimums and the XOF rule below
+are from Paystack's [supported currency table](https://paystack.com/docs/api/#supported-currency);
+Egypt and Rwanda aren't in that table yet, though Paystack's API lists them. Anything else is refused with
 "Currency not supported by merchant".
 
 | Country | Currency | Paystack's minimum | Account holder lookup |
@@ -475,12 +485,14 @@ The fake throws on any other endpoint. For those, use `Http::fake()`.
 
 ## Trying it against Paystack's test mode
 
-- Pay with Paystack's test card: `4084 0840 8408 4081`, CVV `408`, any future
-  expiry, PIN `0000`, OTP `123456`.
+- Pay with Paystack's "no validation" test card: `4084 0840 8408 4081`, CVV
+  `408`, any future expiry. Other cards and channels are on Paystack's
+  [test payments](https://paystack.com/docs/payments/test-payments/) page.
 - Connecting a seller needs a real account or wallet number, even in test
   mode. No money moves. Paystack allows only 3 lookups of real accounts a day
-  in test mode. Its test bank code `001` works for lookups but not for
-  creating a subaccount.
+  in test mode, and its test bank code `001` works for lookups but not for
+  creating a subaccount. Neither is in Paystack's docs; both come from its
+  API's own error messages.
 - Webhooks need a public URL. A `.test` or `localhost` address won't work, so
   use a tunnel such as `herd share`, `expose` or `ngrok`, and put
   `https://<tunnel>/paystack/webhook` in the test Webhook URL field.
@@ -490,7 +502,8 @@ The fake throws on any other endpoint. For those, use `Http::fake()`.
 
 Every webhook's signature is checked against the raw request body. To also
 accept webhooks only from Paystack's servers, uncomment their IP addresses
-under `webhook.allowed_ips` in the config. If your app sits behind a proxy or
+under `webhook.allowed_ips` in the config (the three IPs Paystack publishes on
+its [webhooks](https://paystack.com/docs/payments/webhooks/) page). If your app sits behind a proxy or
 load balancer, set up Laravel's trusted proxies first, or every webhook will
 be rejected.
 
@@ -501,6 +514,23 @@ to `false` and point your route at `WebhookController`, keeping the
 
 Sellers' account numbers are encrypted in the database and left out of the
 model's JSON. Only the last four digits are stored in the clear, for display.
+
+## Paystack references
+
+The package's behaviour follows these pages of Paystack's documentation:
+
+- [Supported currencies](https://paystack.com/docs/api/#supported-currency): subunits, minimums, the XOF rule
+- [Transaction API](https://paystack.com/docs/api/transaction/): checkout parameters, channels, references
+- [Split payments](https://paystack.com/docs/payments/split-payments/) and [Subaccount API](https://paystack.com/docs/api/subaccount/): subaccounts, `transaction_charge`, `bearer`
+- [Verify payments](https://paystack.com/docs/payments/verify-payments/): transaction statuses, including "abandoned"
+- [Webhooks](https://paystack.com/docs/payments/webhooks/): signatures, IPs, retries, 30-second timeout
+- [Refunds](https://paystack.com/docs/payments/refunds/): refund statuses and webhook events
+- [Verify account number](https://paystack.com/docs/identity-verification/verify-account-number/): lookups in Ghana and Nigeria
+- [Test payments](https://paystack.com/docs/payments/test-payments/): test cards
+
+Two behaviours come from Paystack's API rather than its docs: the test-mode
+limit on account lookups, and the `requested_amount` field that lets payments
+settle when you pass Paystack's fee on to the customer.
 
 ## Contributing
 

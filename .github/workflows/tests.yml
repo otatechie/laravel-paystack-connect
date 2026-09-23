@@ -22,6 +22,15 @@ jobs:
             testbench: '10.*'
           - laravel: '13.*'
             testbench: '11.*'
+          # Laravel 13 supports PHP 8.5; Laravel 12 stops at 8.4.
+          - php: '8.5'
+            laravel: '13.*'
+            testbench: '11.*'
+            stability: prefer-stable
+          - php: '8.5'
+            laravel: '13.*'
+            testbench: '11.*'
+            stability: prefer-lowest
 
     name: PHP ${{ matrix.php }} · Laravel ${{ matrix.laravel }} · ${{ matrix.stability }}
 
