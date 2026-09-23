@@ -27,9 +27,6 @@ onboarding, fee rules, local records, and webhooks you can trust.
 - **Nothing fails silently.** Every Paystack error throws with Paystack's own
   message, and webhook failures are logged and retried.
 
-> **Beta.** The package is in beta while it's proven in a production app. The
-> API and the migration may still change before `v1.0.0`.
-
 **What it doesn't do:** each payment goes to one seller, so a cart with
 several sellers needs one payment per seller (or Paystack's
 [multi-split payments](https://paystack.com/docs/payments/multi-split-payments/), which this package
@@ -52,10 +49,10 @@ PHP 8.3+ and Laravel 12 or 13. PHP 8.5 is supported on Laravel 13.
 
 ## Installation
 
-Install it while it's in beta, then publish the migration and config:
+Install it, then publish the migration and config:
 
 ```bash
-composer require otatechie/laravel-paystack-connect:^1.0@beta
+composer require otatechie/laravel-paystack-connect
 php artisan vendor:publish --tag="paystack-connect-migrations"
 php artisan migrate
 php artisan vendor:publish --tag="paystack-connect-config"

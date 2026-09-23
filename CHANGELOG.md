@@ -4,7 +4,9 @@ All notable changes to this package are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow
 [Semantic Versioning](https://semver.org/).
 
-## Unreleased
+## 1.0.0 — 2026-09-23
+
+First stable release. From here on, breaking changes to the API or the migration only come with a new major version.
 
 ### Added
 - `paystack-connect:retry-webhooks` processes failed webhooks again from the database, without waiting for Paystack's retries.
@@ -18,6 +20,7 @@ All notable changes to this package are recorded here. The format follows
 ### Documentation
 - Claims about Paystack link to the Paystack documentation they come from, with a "Paystack references" section.
 - The test card line no longer mentions a PIN and OTP, which Paystack doesn't document for that card.
+- The README documents `Money`, errors, the smaller helpers, and every config setting.
 
 ## 1.0.0-beta.2 — 2026-09-23
 
