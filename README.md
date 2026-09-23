@@ -42,9 +42,9 @@ surfaced as raw `WebhookReceived` events. For anything else Paystack offers,
 [Onboard a seller](#onboard-a-seller) · [Take a payment](#take-a-payment) ·
 [React to payments](#react-to-payments) · [Refunds](#refunds) · [Fees](#fees) ·
 [Currencies](#currencies) · [Moving an existing app over](#moving-an-existing-app-over) ·
-[Testing your app](#testing-your-app) ·
+[Money](#money) · [Errors](#errors) · [Testing your app](#testing-your-app) ·
 [Trying it against Paystack's test mode](#trying-it-against-paystacks-test-mode) ·
-[Security](#security)
+[Security](#security) · [Configuration](#configuration)
 
 ## Requirements
 
@@ -207,6 +207,14 @@ use it in place of `country()`.
 
 Submitting the form again updates the same subaccount.
 
+Other helpers:
+
+```php
+PaystackConnect::subaccounts()->for($business);             // the Subaccount, or null
+PaystackConnect::banks()->find('ghana', 'MTN');             // one bank or network, or null
+PaystackConnect::banks()->resolve('0241234567', 'MTN');     // the account holder's name (Ghana and Nigeria)
+```
+
 ### The subaccount record
 
 `$business->paystackSubaccount` is a `Subaccount` model, stored in
@@ -281,6 +289,7 @@ are in minor units; the helpers give you `Money` objects.
 | `paystack_fee` | Paystack's fee, once the payment has succeeded. |
 | `channel`, `paid_at` | How and when the customer paid. |
 | `failure_reason` | Paystack's reason when a payment failed. |
+| `isPending()`, `isSuccessful()`, `isRefunded()` | Status checks. |
 | `payable`, `subaccount` | The model being paid for, and the seller's subaccount. |
 | `paystack_data` | Paystack's full transaction data, for anything else you need. |
 
@@ -447,6 +456,48 @@ XOF and RWF have no subunit, so amounts must
 be whole: `Money::major('10.50', 'XOF')` throws instead of Paystack silently
 charging XOF 10. Fees in these currencies are rounded to whole units.
 
+## Money
+
+Amounts are `Money` objects: an integer in minor units plus a currency, so
+`19.99` is always `1999` and never a float.
+
+```php
+use Otatechie\PaystackConnect\Support\Money;
+
+$price = Money::major('19.99', 'GHS');   // from a major-unit string (or int or float)
+$price = Money::minor(1999, 'GHS');      // from minor units, as Paystack sends them
+
+$price->minor;                          // 1999
+$price->toMajorString();                // "19.99"
+(string) $price;                        // "GHS 19.99"
+$price->add($other)->subtract($fee);    // same currency only
+json_encode($price);                    // {"amount":1999,"currency":"GHS","formatted":"GHS 19.99"}
+```
+
+Invalid amounts throw `InvalidAmount`: negative, unparseable (`"19.999"`,
+`"1,000"`), mixed currencies, or a fraction of XOF or RWF.
+
+## Errors
+
+Everything Paystack refuses throws `PaystackException` with Paystack's own
+message, and `$e->body` holds its full response:
+
+```php
+use Otatechie\PaystackConnect\Exceptions\PaystackException;
+
+try {
+    $payment = PaystackConnect::checkout()->amount('50')->email($email)->create();
+} catch (PaystackException $e) {
+    $e->getMessage();   // "Paystack POST /transaction/initialize failed (403): Currency not supported by merchant"
+    $e->getCode();      // 403, or 0 when Paystack couldn't be reached
+    $e->body;           // Paystack's JSON response, or null
+}
+```
+
+A missing secret key and network failures throw it too. Mistakes in your own
+calls, such as a checkout with no email or a seller with no subaccount, throw
+`InvalidArgumentException` before anything is sent.
+
 ## Moving an existing app over
 
 If your sellers already have subaccounts, copy them into the local table:
@@ -534,6 +585,28 @@ to `false` and point your route at `WebhookController`, keeping the
 
 Sellers' account numbers are encrypted in the database and left out of the
 model's JSON. Only the last four digits are stored in the clear, for display.
+
+## Configuration
+
+Publish `config/paystack-connect.php` to change any of these. Each setting is
+explained in the file.
+
+| Setting | Default | What it does |
+|---|---|---|
+| `secret_key`, `public_key` | `.env` | Your Paystack keys. The public key is only for your own frontend. |
+| `currency` | `GHS` | Currency for amounts given without one. |
+| `fees` | 2.5%, per-currency min/max | Your platform fee on payments to sellers. |
+| `bearer` | `account` | Who pays Paystack's fee: `account` (you) or `subaccount` (the seller). |
+| `sellers.verify_accounts` | `true` | Look up the account holder before creating a subaccount (Ghana and Nigeria). |
+| `sellers.percentage_charge` | `0` | Your share on payments made outside the package, such as Paystack payment pages. |
+| `webhook.enabled` | `true` | Register the webhook route. |
+| `webhook.path` | `paystack/webhook` | The webhook URL path. |
+| `webhook.middleware` | `[]` | Extra middleware in front of the signature check. |
+| `webhook.keep_days` | `30` | Days to keep processed webhook events; `null` keeps them forever. |
+| `webhook.allowed_ips` | none | Only accept webhooks from these IPs. |
+| `banks_cache_ttl` | 24 hours | How long Paystack's bank list is cached, in seconds. |
+| `log_channel` | default channel | Where webhook problems are logged. |
+| `base_url`, `timeout` | Paystack's API, 15 s | For proxies and slow networks. |
 
 ## Paystack references
 
