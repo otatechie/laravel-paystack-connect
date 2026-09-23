@@ -57,8 +57,9 @@ class PaystackConnect
     /**
      * Ask Paystack to refund a successful payment, in full or in part.
      *
-     * Paystack processes refunds asynchronously. The payment is updated, and
-     * PaymentRefunded dispatched, when the refund.processed webhook arrives.
+     * Paystack processes refunds asynchronously. Until it does, the amount is
+     * held as pending so it can't be refunded twice. The payment is updated,
+     * and PaymentRefunded dispatched, when the refund.processed webhook arrives.
      *
      * @return array<string, mixed> Paystack's refund data.
      */
@@ -78,10 +79,14 @@ class PaystackConnect
             throw new InvalidAmount("Refund must be above zero and at most {$payment->refundableAmount()}.");
         }
 
-        return $this->client()->post('/refund', [
+        $refund = $this->client()->post('/refund', [
             'transaction' => $payment->reference,
             'amount' => $amount->minor,
         ])['data'];
+
+        $payment->increment('refund_pending', $amount->minor);
+
+        return $refund;
     }
 
     public function client(): PaystackClient

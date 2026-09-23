@@ -13,7 +13,7 @@ return new class extends Migration
             $table->nullableMorphs('owner');
             $table->string('subaccount_code')->unique();
             $table->string('business_name');
-            $table->string('settlement_bank');
+            $table->string('settlement_bank')->nullable();
             $table->string('bank_name')->nullable();
             $table->string('account_type')->default('bank');
             $table->text('account_number');
@@ -41,11 +41,12 @@ return new class extends Migration
             $table->text('authorization_url')->nullable();
             $table->unsignedBigInteger('paystack_transaction_id')->nullable();
             $table->string('channel')->nullable();
-            $table->string('failure_reason')->nullable();
+            $table->text('failure_reason')->nullable();
             $table->json('metadata')->nullable();
             $table->json('paystack_data')->nullable();
             $table->timestamp('paid_at')->nullable();
             $table->unsignedBigInteger('refunded_amount')->default(0);
+            $table->unsignedBigInteger('refund_pending')->default(0);
             $table->timestamp('refunded_at')->nullable();
             $table->json('refund_ids')->nullable();
             $table->timestamps();

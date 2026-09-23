@@ -71,9 +71,11 @@ class PaymentReconciler
             }
 
             // Only a pending payment can fail, so PaymentFailed fires once.
-            if ($payment->isPending() && in_array($status, ['failed', 'abandoned', 'reversed'], true)) {
+            // "abandoned" is not a failure: Paystack reports it for every
+            // checkout the customer hasn't paid yet, so it stays pending.
+            if ($payment->isPending() && in_array($status, ['failed', 'reversed'], true)) {
                 $payment->update([
-                    'status' => $status === 'abandoned' ? PaymentStatus::Abandoned : PaymentStatus::Failed,
+                    'status' => PaymentStatus::Failed,
                     'failure_reason' => $transaction['gateway_response'] ?? $status,
                     'paystack_data' => $transaction,
                 ]);
@@ -93,17 +95,60 @@ class PaymentReconciler
     }
 
     /**
-     * Records a refund that Paystack has processed. A refund whose Paystack
-     * id was already recorded is skipped, so a retried webhook counts once.
+     * Records a refund that Paystack has processed.
      *
      * @param  array<string, mixed>  $refund  Paystack's refund data.
      * @return Payment|null The payment, or null when no payment has this reference.
      */
     public function reconcileRefund(array $refund): ?Payment
     {
+        return $this->applyRefund($refund, function (Payment $payment, int $amount) {
+            // Never record more than was paid.
+            $amount = min($amount, $payment->amount - $payment->refunded_amount);
+
+            if ($amount <= 0) {
+                return null;
+            }
+
+            $refunded = $payment->refunded_amount + $amount;
+
+            $payment->update([
+                'refunded_amount' => $refunded,
+                'refund_pending' => max(0, $payment->refund_pending - $amount),
+                'refunded_at' => now(),
+                'status' => $refunded >= $payment->amount ? PaymentStatus::Refunded : $payment->status,
+            ]);
+
+            return new PaymentRefunded($payment, Money::minor($amount, $payment->currency));
+        });
+    }
+
+    /**
+     * Frees the amount of a refund that Paystack failed, so it can be refunded again.
+     *
+     * @param  array<string, mixed>  $refund  Paystack's refund data.
+     */
+    public function releaseRefund(array $refund): ?Payment
+    {
+        return $this->applyRefund($refund, function (Payment $payment, int $amount) {
+            $payment->update(['refund_pending' => max(0, $payment->refund_pending - $amount)]);
+
+            return null;
+        });
+    }
+
+    /**
+     * A refund whose Paystack id was already recorded is skipped, so a
+     * retried webhook counts once.
+     *
+     * @param  array<string, mixed>  $refund
+     * @param  callable(Payment, int): (PaymentRefunded|null)  $apply
+     */
+    private function applyRefund(array $refund, callable $apply): ?Payment
+    {
         $event = null;
 
-        $payment = DB::transaction(function () use ($refund, &$event) {
+        $payment = DB::transaction(function () use ($refund, $apply, &$event) {
             $payment = Payment::query()
                 ->where('reference', $refund['transaction_reference'] ?? $refund['transaction']['reference'] ?? null)
                 ->lockForUpdate()
@@ -120,23 +165,11 @@ class PaymentReconciler
                 return $payment;
             }
 
-            // Never record more than was paid.
-            $amount = min((int) ($refund['amount'] ?? 0), $payment->refundableAmount()->minor);
+            $event = $apply($payment, (int) ($refund['amount'] ?? 0));
 
-            if ($amount <= 0) {
-                return $payment;
+            if ($refundId !== null) {
+                $payment->update(['refund_ids' => [...$refundIds, $refundId]]);
             }
-
-            $refunded = $payment->refunded_amount + $amount;
-
-            $payment->update([
-                'refunded_amount' => $refunded,
-                'refunded_at' => now(),
-                'refund_ids' => $refundId === null ? $payment->refund_ids : [...$refundIds, $refundId],
-                'status' => $refunded >= $payment->amount ? PaymentStatus::Refunded : $payment->status,
-            ]);
-
-            $event = new PaymentRefunded($payment, Money::minor($amount, $payment->currency));
 
             return $payment;
         });

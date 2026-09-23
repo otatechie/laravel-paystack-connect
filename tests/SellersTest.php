@@ -72,6 +72,16 @@ it('updates the same subaccount when a seller changes accounts instead of creati
         && str_ends_with($request->url(), '/subaccount/ACCT_abc'));
 });
 
+it('skips the account lookup in countries where Paystack has none, such as Kenya', function () {
+    fakeSubaccountApi();
+
+    Business::create(['name' => 'Wanjiku Crafts'])
+        ->connectPaystackAccount(SettlementAccount::bank('Wanjiku Crafts', '01', '1234567890', 'KES'));
+
+    Http::assertNotSent(fn (Request $request) => str_contains($request->url(), '/bank/resolve'));
+    Http::assertSent(fn (Request $request) => str_ends_with($request->url(), '/subaccount'));
+});
+
 it('does not create a subaccount when Paystack cannot resolve the account', function () {
     Http::fake([
         'api.paystack.co/bank/resolve*' => Http::response(['status' => false, 'message' => 'Could not resolve account name.'], 422),
@@ -89,7 +99,9 @@ it('imports every page of existing subaccounts, not just the first 50', function
     $page = fn (int $from, int $to) => collect(range($from, $to))->map(fn ($i) => [
         'subaccount_code' => "ACCT_{$i}",
         'business_name' => "Seller {$i}",
+        // Paystack lists the bank's name here; its code has to come from bank_id.
         'settlement_bank' => 'GCB Bank',
+        'bank_id' => 7,
         'account_number' => '00000'.$i,
         'currency' => 'GHS',
         'metadata' => $i === 1 ? json_encode(['owner_type' => Business::class, 'owner_id' => $business->id]) : null,
@@ -98,11 +110,14 @@ it('imports every page of existing subaccounts, not just the first 50', function
     Http::fake([
         'api.paystack.co/subaccount?perPage=100&page=1' => Http::response(['status' => true, 'data' => $page(1, 100), 'meta' => ['pageCount' => 2]]),
         'api.paystack.co/subaccount?perPage=100&page=2' => Http::response(['status' => true, 'data' => $page(101, 130), 'meta' => ['pageCount' => 2]]),
+        'api.paystack.co/bank*' => Http::response(['status' => true, 'data' => [['id' => 7, 'name' => 'GCB Bank', 'code' => '300335', 'type' => 'ghipss']]]),
     ]);
 
     expect(PaystackConnect::subaccounts()->import())->toBe(130)
         ->and(Subaccount::count())->toBe(130)
-        ->and($business->fresh()->paystackSubaccount->subaccount_code)->toBe('ACCT_1');
+        ->and($business->fresh()->paystackSubaccount->subaccount_code)->toBe('ACCT_1')
+        ->and(Subaccount::first()->settlement_bank)->toBe('300335')
+        ->and(Subaccount::first()->bank_name)->toBe('GCB Bank');
 });
 
 it('lists every bank by following Paystack\'s cursor', function () {

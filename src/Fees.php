@@ -18,8 +18,11 @@ class Fees
     {
         $rule = $this->ruleFor($amount->currency);
 
+        // Round to what Paystack can charge: a pesewa, or a whole franc for XOF.
+        $unit = Money::smallestUnit($amount->currency);
+
         $fee = Money::minor(
-            (int) round($amount->minor * ((float) ($rule['percentage'] ?? 0)) / 100),
+            (int) round($amount->minor * ((float) ($rule['percentage'] ?? 0)) / 100 / $unit) * $unit,
             $amount->currency,
         );
 

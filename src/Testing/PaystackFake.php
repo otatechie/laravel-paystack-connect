@@ -64,13 +64,13 @@ class PaystackFake extends PaystackClient
         return $this->reconciler->reconcile([...$this->transaction($payment), 'gateway_response' => $reason]);
     }
 
-    /** Record a refund, as the refund.processed webhook would. Refunds everything left by default. */
+    /** Record a refund, as the refund.processed webhook would. Refunds everything not yet refunded by default. */
     public function refunded(Payment $payment, ?Money $amount = null): Payment
     {
         return $this->reconciler->reconcileRefund([
             'id' => random_int(1_000_000, 9_999_999),
             'transaction_reference' => $payment->reference,
-            'amount' => ($amount ?? $payment->refundableAmount())->minor,
+            'amount' => ($amount ?? $payment->total()->subtract($payment->refundedAmount()))->minor,
             'currency' => $payment->currency,
             'status' => 'processed',
         ]);
@@ -162,8 +162,8 @@ class PaystackFake extends PaystackClient
     {
         return [
             'id' => random_int(1_000_000, 9_999_999),
-            // Paystack reports "ongoing" until the customer finishes paying.
-            'status' => $this->statuses[$payment->reference] ?? 'ongoing',
+            // Paystack reports "abandoned" for a checkout that hasn't been paid yet.
+            'status' => $this->statuses[$payment->reference] ?? 'abandoned',
             'reference' => $payment->reference,
             'amount' => $payment->amount,
             'currency' => $payment->currency,

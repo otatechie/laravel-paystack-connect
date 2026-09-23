@@ -39,7 +39,7 @@ class Checkout
 
     private ?string $callbackUrl = null;
 
-    private ?Money $fee = null;
+    private Money|string|int|float|null $fee = null;
 
     private ?string $bearer = null;
 
@@ -107,10 +107,10 @@ class Checkout
         return $this;
     }
 
-    /** Override the fee from config for this one payment. */
+    /** Override the fee from config for this one payment. A major-unit amount is in the payment's currency. */
     public function fee(Money|string|int|float $fee): self
     {
-        $this->fee = $fee instanceof Money ? $fee : Money::major($fee, $this->amount?->currency);
+        $this->fee = $fee;
 
         return $this;
     }
@@ -162,7 +162,13 @@ class Checkout
         $fee = Money::minor(0, $this->amount->currency);
 
         if ($this->subaccount) {
-            $fee = ($this->fee ?? $this->fees->for($this->amount))->min($this->amount);
+            $fee = match (true) {
+                $this->fee === null => $this->fees->for($this->amount),
+                $this->fee instanceof Money => $this->fee,
+                default => Money::major($this->fee, $this->amount->currency),
+            };
+
+            $fee = $fee->min($this->amount);
         }
 
         $payment = Payment::create([

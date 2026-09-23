@@ -16,6 +16,11 @@ class InvalidAmount extends InvalidArgumentException
         return new self("\"{$amount}\" is not a valid amount. Use digits with up to two decimals, like \"19.99\".");
     }
 
+    public static function fraction(string $currency): self
+    {
+        return new self("{$currency} has no subunit. Use a whole amount, like \"1000\".");
+    }
+
     public static function currencyMismatch(string $a, string $b): self
     {
         return new self("Cannot combine {$a} and {$b} amounts.");

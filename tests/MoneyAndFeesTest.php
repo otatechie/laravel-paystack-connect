@@ -58,3 +58,15 @@ it('adds a flat fee on top of the percentage', function () {
 
     expect(PaystackConnect::feeFor(Money::major('200.00', 'USD'))->toMajorString())->toBe('4.00');
 });
+
+it('refuses fractions of currencies that have no subunit', function () {
+    // Paystack still takes these ×100, but silently drops any fraction.
+    expect(Money::major('1000', 'XOF')->minor)->toBe(100000)
+        ->and(fn () => Money::major('10.50', 'XOF'))->toThrow(InvalidAmount::class)
+        ->and(fn () => Money::minor(1050, 'RWF'))->toThrow(InvalidAmount::class);
+});
+
+it('rounds fees to whole units in currencies without a subunit', function () {
+    // 2.5% of XOF 1,010 is 25.25, which Paystack can't charge.
+    expect(PaystackConnect::feeFor(Money::major('1010', 'XOF'))->minor)->toBe(2500);
+});

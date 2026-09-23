@@ -25,11 +25,11 @@ function paidPayment(string $amount = '100.00'): Payment
     return $fake->pay(PaystackConnect::checkout()->amount($amount, 'GHS')->email('c@example.com')->create());
 }
 
-function refundWebhook(Payment $payment, int $amount): string
+function refundWebhook(Payment $payment, int $amount, string $status = 'processed'): string
 {
-    return json_encode(['event' => 'refund.processed', 'data' => [
+    return json_encode(['event' => "refund.{$status}", 'data' => [
         'id' => random_int(1, 999999),
-        'status' => 'processed',
+        'status' => $status,
         'transaction_reference' => $payment->reference,
         'amount' => $amount,
         'currency' => $payment->currency,
@@ -106,6 +106,40 @@ it('counts a refund once when Paystack retries after a listener failed', functio
 
     expect($payment->refresh()->refunded_amount)->toBe(2500);
     Event::assertDispatchedTimes(PaymentRefunded::class, 1);
+});
+
+it('holds back a requested refund until Paystack processes it', function () {
+    $payment = paidPayment();
+
+    PaystackConnect::refund($payment, Money::major('40.00', 'GHS'));
+    $payment->refresh();
+
+    expect($payment->pendingRefundAmount()->toMajorString())->toBe('40.00')
+        ->and($payment->refundableAmount()->toMajorString())->toBe('60.00')
+        ->and(fn () => PaystackConnect::refund($payment, Money::major('70.00', 'GHS')))->toThrow(InvalidAmount::class);
+
+    $this->postWebhook(refundWebhook($payment, 4000))->assertOk();
+    $payment->refresh();
+
+    expect($payment->pendingRefundAmount()->isZero())->toBeTrue()
+        ->and($payment->refundedAmount()->toMajorString())->toBe('40.00')
+        ->and($payment->refundableAmount()->toMajorString())->toBe('60.00');
+});
+
+it('frees the amount again when Paystack fails a refund', function () {
+    Event::fake([PaymentRefunded::class]);
+    $payment = paidPayment();
+
+    PaystackConnect::refund($payment);
+    expect($payment->refresh()->refundableAmount()->isZero())->toBeTrue();
+
+    $this->postWebhook(refundWebhook($payment, 10000, 'failed'))->assertOk();
+    $payment->refresh();
+
+    expect($payment->pendingRefundAmount()->isZero())->toBeTrue()
+        ->and($payment->refunded_amount)->toBe(0)
+        ->and($payment->refundableAmount()->toMajorString())->toBe('100.00');
+    Event::assertNotDispatched(PaymentRefunded::class);
 });
 
 it('ignores refunds for payments that were never paid', function () {

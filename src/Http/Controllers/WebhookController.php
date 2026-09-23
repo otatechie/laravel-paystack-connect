@@ -51,6 +51,10 @@ class WebhookController
                 $reconciler->reconcileRefund($payload['data']);
             }
 
+            if ($payload['event'] === 'refund.failed' && isset($payload['data'])) {
+                $reconciler->releaseRefund($payload['data']);
+            }
+
             WebhookReceived::dispatch($payload['event'], $payload);
 
             $event->update(['processed_at' => now(), 'error' => null]);

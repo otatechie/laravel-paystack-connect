@@ -18,6 +18,12 @@ use Otatechie\PaystackConnect\Support\SettlementAccount;
  */
 class Subaccounts
 {
+    /**
+     * Paystack can only look up account holders in Ghana and Nigeria. Elsewhere
+     * it checks the account itself when the subaccount is created.
+     */
+    private const LOOKUP_CURRENCIES = ['GHS', 'NGN'];
+
     public function __construct(
         private readonly PaystackClient $client,
         private readonly Banks $banks,
@@ -27,7 +33,7 @@ class Subaccounts
 
     public function connect(Model $owner, SettlementAccount $account, ?float $percentageCharge = null): Subaccount
     {
-        if ($this->verifyAccounts && $account->accountName === null) {
+        if ($this->verifyAccounts && $account->accountName === null && in_array($account->currency, self::LOOKUP_CURRENCIES, true)) {
             $account = $account->withAccountName($this->banks->resolve($account->accountNumber, $account->bankCode));
         }
 
@@ -123,6 +129,10 @@ class Subaccounts
         }
 
         $accountNumber = (string) ($data['account_number'] ?? '');
+        $currency = strtoupper($data['currency'] ?? (string) config('paystack-connect.currency', 'GHS'));
+
+        // Paystack lists the bank's name as settlement_bank; the code comes from bank_id.
+        $bank = isset($data['bank_id']) ? $this->banks->findById($currency, (int) $data['bank_id']) : null;
 
         Subaccount::updateOrCreate(
             ['subaccount_code' => $data['subaccount_code']],
@@ -130,12 +140,12 @@ class Subaccounts
                 'owner_type' => $owner?->getMorphClass(),
                 'owner_id' => $owner?->getKey(),
                 'business_name' => $data['business_name'] ?? '',
-                'settlement_bank' => (string) ($data['settlement_bank'] ?? ''),
-                'bank_name' => $data['settlement_bank'] ?? null,
+                'settlement_bank' => $bank['code'] ?? null,
+                'bank_name' => $bank['name'] ?? $data['settlement_bank'] ?? null,
                 'account_number' => $accountNumber,
                 'account_number_last4' => substr($accountNumber, -4),
                 'account_name' => $data['account_name'] ?? null,
-                'currency' => $data['currency'] ?? (string) config('paystack-connect.currency', 'GHS'),
+                'currency' => $currency,
                 'percentage_charge' => $data['percentage_charge'] ?? 0,
                 'active' => (bool) ($data['active'] ?? true),
                 'paystack_data' => $data,

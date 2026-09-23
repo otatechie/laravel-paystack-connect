@@ -11,7 +11,8 @@ onboarding, fee rules, local records, and webhooks you can trust.
 - **Exact money.** Amounts are integers in pesewas, kobo or cents. `19.99` is
   always `1999`, never `1998`.
 - **Seller onboarding.** Bank and mobile money lists come live from Paystack,
-  the account holder's name is verified before any subaccount is created, and
+  the account holder's name is verified before any subaccount is created
+  (in Ghana and Nigeria, where Paystack offers it), and
   connecting the same seller twice updates their subaccount instead of
   creating a duplicate.
 - **Platform fees.** A percentage plus a flat amount, with a minimum and a
@@ -43,9 +44,10 @@ PAYSTACK_PUBLIC_KEY=pk_test_xxx
 PAYSTACK_CURRENCY=GHS
 ```
 
-In your Paystack dashboard, set the webhook URL to
-`https://your-app.com/paystack/webhook`. The path can be changed in
-`config/paystack-connect.php`.
+In your Paystack dashboard, under Settings → API Keys & Webhooks, put
+`https://your-app.com/paystack/webhook` in the **Webhook URL** field. Not the
+Callback URL field: each checkout sends its own. Test and live mode each have
+their own webhook URL. The path can be changed in `config/paystack-connect.php`.
 
 ## Onboard a seller
 
@@ -70,6 +72,9 @@ PaystackConnect::banks()->list('ghana');          // banks
 PaystackConnect::banks()->mobileMoney('ghana');   // MTN, Telecel, AirtelTigo
 ```
 
+Countries use Paystack's names: `ghana`, `nigeria`, `kenya`, `south africa`,
+`côte d'ivoire`, `egypt` and `rwanda`.
+
 Then connect their account:
 
 ```php
@@ -83,9 +88,11 @@ $business->connectPaystackAccount(
 $business->canReceivePaystackPayments(); // true
 ```
 
-The account holder's name is checked with Paystack first. If it can't be
-resolved, a `PaystackException` explains why and nothing is created. To skip
-the check, set `sellers.verify_accounts` to `false`.
+In Ghana and Nigeria, the account holder's name is checked with Paystack
+first. If it can't be resolved, a `PaystackException` explains why and nothing
+is created. Paystack has no such lookup in other countries, so there it checks
+the account itself when the subaccount is created. To skip the lookup, set
+`sellers.verify_accounts` to `false`.
 
 ## Take a payment
 
@@ -143,15 +150,24 @@ Event::listen(function (PaymentSucceeded $event) {
 | Event | When |
 |---|---|
 | `PaymentSucceeded` | Paystack confirmed the charge and the amount and currency match. |
-| `PaymentFailed` | The charge failed or the customer abandoned it. The customer can still pay on the same checkout, so `PaymentSucceeded` may follow. |
+| `PaymentFailed` | The charge was declined. The customer can still pay on the same checkout, so `PaymentSucceeded` may follow. |
 | `PaymentAmountMismatch` | Paystack charged a different amount or currency. The payment is not marked paid; review it. |
 | `PaymentRefunded` | Paystack processed a refund. `$event->amount` is how much went back. |
 | `SubaccountConnected` | A seller's subaccount was created or updated. |
 | `WebhookReceived` | Any verified webhook, including events this package doesn't handle itself. |
 
+A checkout the customer hasn't paid yet stays `pending`, even though Paystack
+reports it as "abandoned": they can still come back and pay. To clean up old
+unpaid checkouts, query pending payments older than you care about.
+
 Listeners run once per payment, even when Paystack retries a webhook. If a
 listener throws, the webhook returns an error, the event is kept, and
-Paystack's next retry processes it again.
+Paystack's next retry processes it again. In live mode Paystack retries every
+3 minutes for the first 4 tries, then hourly for 72 hours; in test mode,
+hourly for 10 hours. You can also resend events from the Paystack dashboard.
+
+Paystack gives each delivery 30 seconds, so keep listeners quick and queue
+slow work such as emails, as above.
 
 ## Refunds
 
@@ -160,14 +176,20 @@ PaystackConnect::refund($payment);                                  // everythin
 PaystackConnect::refund($payment, Money::major('50.00', 'GHS'));    // part of it
 ```
 
-Paystack processes refunds in the background. When its `refund.processed`
-webhook arrives, the payment's `refunded_amount` goes up and `PaymentRefunded`
-is dispatched. Once the whole amount is back, the status becomes `refunded`.
+Paystack processes refunds in the background, which can take a while. Until
+it does, the amount is held as pending, so the same money can't be refunded
+twice. When the `refund.processed` webhook arrives, the payment's
+`refunded_amount` goes up and `PaymentRefunded` is dispatched. Once the whole
+amount is back, the status becomes `refunded`. If Paystack fails the refund
+(`refund.failed`), the amount can be refunded again. If Paystack needs the
+customer's bank details first (`refund.needs-attention`), the refund stays
+pending until you provide them through Paystack's retry endpoint or dashboard.
 
 ```php
-$payment->refundedAmount();    // GHS 50.00
-$payment->refundableAmount();  // GHS 200.00
-$payment->isRefunded();        // false until everything is back
+$payment->pendingRefundAmount(); // GHS 50.00 until Paystack processes it
+$payment->refundedAmount();      // GHS 50.00 after
+$payment->refundableAmount();    // GHS 200.00: not refunded and not pending
+$payment->isRefunded();          // false until everything is back
 ```
 
 ## Fees
@@ -181,11 +203,37 @@ $payment->isRefunded();        // false until everything is back
 ],
 ```
 
-Amounts are in major units (GHS 5, not 500 pesewas). To preview a fee:
+Amounts are in major units (GHS 5, not 500 pesewas). A currency without its
+own rule uses the default alone. Payments without a seller have no fee. To
+preview a fee:
 
 ```php
 PaystackConnect::feeFor(Money::major('100.00', 'GHS')); // GHS 5.00
 ```
+
+By default your platform pays Paystack's own fee, out of your fee (`bearer`
+set to `account`). Set it to `subaccount` to have sellers pay it instead.
+
+## Currencies
+
+Each Paystack account charges in its own country's currency, plus USD in some
+countries if Paystack has enabled it for you. Anything else is refused with
+"Currency not supported by merchant".
+
+| Country | Currency | Paystack's minimum | Account holder lookup |
+|---|---|---|---|
+| Ghana | GHS | GHS 0.10 | yes |
+| Nigeria | NGN | NGN 50.00 | yes |
+| Kenya | KES | KES 3.00 | no |
+| South Africa | ZAR | ZAR 1.00 | no |
+| Côte d'Ivoire | XOF | XOF 1 | no |
+| Egypt | EGP | not published | no |
+| Rwanda | RWF | not published | no |
+
+USD has a minimum of USD 2.00; Paystack documents it for Kenya and Nigeria.
+XOF and RWF have no subunit, so amounts must
+be whole: `Money::major('10.50', 'XOF')` throws instead of Paystack silently
+charging XOF 10. Fees in these currencies are rounded to whole units.
 
 ## Moving an existing app over
 
@@ -226,7 +274,7 @@ it('marks the invoice paid', function () {
 
 | Method | What it does |
 |---|---|
-| `pay($payment)` | Settles the payment as paid. `verify()` reports it as paid from then on. |
+| `pay($payment)` | Settles the payment as paid. `verify()` reports it as paid from then on; before that, it reports "abandoned" like Paystack does, and the payment stays pending. |
 | `fail($payment, $reason)` | Settles the payment as failed. |
 | `refunded($payment, ?Money)` | Records a refund, as the `refund.processed` webhook would. |
 | `assertCheckoutCreated(?callable)` | A checkout was started. The callback receives what was sent to Paystack. |
@@ -234,6 +282,19 @@ it('marks the invoice paid', function () {
 | `assertNothingSent()` | Nothing was sent to Paystack. |
 
 The fake throws on any other endpoint. For those, use `Http::fake()`.
+
+## Trying it against Paystack's test mode
+
+- Pay with Paystack's test card: `4084 0840 8408 4081`, CVV `408`, any future
+  expiry, PIN `0000`, OTP `123456`.
+- Connecting a seller needs a real account or wallet number, even in test
+  mode. No money moves. Paystack allows only 3 lookups of real accounts a day
+  in test mode. Its test bank code `001` works for lookups but not for
+  creating a subaccount.
+- Webhooks need a public URL. A `.test` or `localhost` address won't work, so
+  use a tunnel such as `herd share`, `expose` or `ngrok`, and put
+  `https://<tunnel>/paystack/webhook` in the test Webhook URL field.
+- Test refunds can stay pending for a while before Paystack processes them.
 
 ## Security
 

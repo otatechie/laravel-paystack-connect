@@ -32,6 +32,7 @@ use Otatechie\PaystackConnect\Support\Money;
  * @property Carbon|null $paid_at
  * @property int $refunded_amount
  * @property Carbon|null $refunded_at
+ * @property int $refund_pending Refunds requested but not yet processed by Paystack.
  * @property list<int|string>|null $refund_ids Paystack ids of the refunds already recorded.
  */
 class Payment extends Model
@@ -51,6 +52,7 @@ class Payment extends Model
             'paystack_data' => 'array',
             'paid_at' => 'datetime',
             'refunded_amount' => 'integer',
+            'refund_pending' => 'integer',
             'refunded_at' => 'datetime',
             'refund_ids' => 'array',
         ];
@@ -93,10 +95,16 @@ class Payment extends Model
         return Money::minor($this->refunded_amount, $this->currency);
     }
 
-    /** What can still be refunded. */
+    /** Refunds requested from Paystack that it hasn't processed yet. */
+    public function pendingRefundAmount(): Money
+    {
+        return Money::minor($this->refund_pending, $this->currency);
+    }
+
+    /** What can still be refunded: not refunded, and not already requested. */
     public function refundableAmount(): Money
     {
-        return $this->total()->subtract($this->refundedAmount());
+        return $this->total()->subtract($this->refundedAmount())->subtract($this->pendingRefundAmount());
     }
 
     public function isRefunded(): bool

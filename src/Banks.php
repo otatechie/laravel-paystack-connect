@@ -15,6 +15,17 @@ use Otatechie\PaystackConnect\Http\PaystackClient;
  */
 class Banks
 {
+    /** Paystack's country name for each local currency. */
+    public const COUNTRIES = [
+        'GHS' => 'ghana',
+        'NGN' => 'nigeria',
+        'KES' => 'kenya',
+        'ZAR' => 'south africa',
+        'XOF' => "côte d'ivoire",
+        'EGP' => 'egypt',
+        'RWF' => 'rwanda',
+    ];
+
     public function __construct(
         private readonly PaystackClient $client,
         private readonly Cache $cache,
@@ -22,9 +33,10 @@ class Banks
     ) {}
 
     /**
-     * @param  string  $country  Paystack's country name: "ghana", "nigeria", "kenya" or "south africa".
+     * @param  string  $country  Paystack's country name: "ghana", "nigeria", "kenya", "south africa",
+     *                           "côte d'ivoire", "egypt" or "rwanda".
      * @param  string|null  $type  Optional, such as "mobile_money", "ghipss" or "nuban".
-     * @return Collection<int, array{name: string, code: string, type: string|null, currency: string|null}>
+     * @return Collection<int, array{id: int|null, name: string, code: string, type: string|null, currency: string|null}>
      */
     public function list(string $country, ?string $type = null): Collection
     {
@@ -39,16 +51,28 @@ class Banks
         return collect($banks);
     }
 
-    /** @return Collection<int, array{name: string, code: string, type: string|null, currency: string|null}> */
+    /** @return Collection<int, array{id: int|null, name: string, code: string, type: string|null, currency: string|null}> */
     public function mobileMoney(string $country): Collection
     {
         return $this->list($country, 'mobile_money');
     }
 
-    /** @return array{name: string, code: string, type: string|null, currency: string|null}|null */
+    /** @return array{id: int|null, name: string, code: string, type: string|null, currency: string|null}|null */
     public function find(string $country, string $code): ?array
     {
         return $this->list($country)->firstWhere('code', $code);
+    }
+
+    /**
+     * Find a bank by Paystack's numeric id, which is how subaccounts refer to it.
+     *
+     * @return array{id: int|null, name: string, code: string, type: string|null, currency: string|null}|null
+     */
+    public function findById(string $currency, int $id): ?array
+    {
+        $country = self::COUNTRIES[strtoupper($currency)] ?? null;
+
+        return $country ? $this->list($country)->firstWhere('id', $id) : null;
     }
 
     /**
@@ -70,7 +94,7 @@ class Banks
 
     /**
      * @param  array<string, string>  $query
-     * @return list<array{name: string, code: string, type: string|null, currency: string|null}>
+     * @return list<array{id: int|null, name: string, code: string, type: string|null, currency: string|null}>
      */
     private function fetchAll(array $query): array
     {
@@ -88,6 +112,7 @@ class Banks
 
             foreach ($response['data'] ?? [] as $bank) {
                 $banks[] = [
+                    'id' => isset($bank['id']) ? (int) $bank['id'] : null,
                     'name' => $bank['name'],
                     'code' => $bank['code'],
                     'type' => $bank['type'] ?? null,

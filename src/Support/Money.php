@@ -17,6 +17,12 @@ final class Money implements JsonSerializable, Stringable
     /** Paystack expresses every supported currency in hundredths. */
     public const SUBUNITS = 100;
 
+    /**
+     * Currencies with no subunit. Paystack still takes them ×100 but drops
+     * any fraction, so a fraction is refused here instead of lost there.
+     */
+    private const WHOLE_UNITS_ONLY = ['XOF', 'RWF'];
+
     private function __construct(
         public readonly int $minor,
         public readonly string $currency,
@@ -28,7 +34,19 @@ final class Money implements JsonSerializable, Stringable
             throw InvalidAmount::negative();
         }
 
-        return new self($minor, self::currency($currency));
+        $currency = self::currency($currency);
+
+        if ($minor % self::smallestUnit($currency) !== 0) {
+            throw InvalidAmount::fraction($currency);
+        }
+
+        return new self($minor, $currency);
+    }
+
+    /** The smallest amount Paystack can charge in this currency, in minor units. */
+    public static function smallestUnit(string $currency): int
+    {
+        return in_array(strtoupper($currency), self::WHOLE_UNITS_ONLY, true) ? self::SUBUNITS : 1;
     }
 
     /**

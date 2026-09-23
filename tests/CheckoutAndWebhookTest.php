@@ -12,6 +12,7 @@ use Otatechie\PaystackConnect\Facades\PaystackConnect;
 use Otatechie\PaystackConnect\Models\Payment;
 use Otatechie\PaystackConnect\Models\Subaccount;
 use Otatechie\PaystackConnect\Models\WebhookEvent;
+use Otatechie\PaystackConnect\Support\Money;
 use Otatechie\PaystackConnect\Tests\Fixtures\Business;
 
 beforeEach(function () {
@@ -186,27 +187,50 @@ it('verifies a payment on the callback page and agrees with the webhook', functi
     Event::assertDispatchedTimes(PaymentSucceeded::class, 1);
 });
 
-it('marks a payment paid when the customer succeeds after an abandoned or failed attempt', function (string $earlier, PaymentStatus $recorded) {
+it('keeps a payment pending when Paystack reports it abandoned', function () {
+    Event::fake([PaymentFailed::class]);
+    $payment = PaystackConnect::checkout()->amount('50')->email('c@example.com')->create();
+
+    // Paystack says "abandoned" for any checkout the customer hasn't paid yet.
+    Http::fake([
+        'api.paystack.co/transaction/verify/*' => Http::response(['status' => true, 'data' => [
+            'reference' => $payment->reference, 'status' => 'abandoned', 'amount' => 5000, 'currency' => 'GHS',
+        ]]),
+    ]);
+
+    expect(PaystackConnect::verify($payment->reference)->status)->toBe(PaymentStatus::Pending);
+    Event::assertNotDispatched(PaymentFailed::class);
+});
+
+it('marks a payment paid when the customer succeeds after a declined attempt', function () {
     Event::fake([PaymentSucceeded::class, PaymentFailed::class]);
     $payment = PaystackConnect::checkout()->amount('50')->email('c@example.com')->create();
 
-    // The customer came back early, or their first card was declined.
     Http::fake([
         'api.paystack.co/transaction/verify/*' => Http::response(['status' => true, 'data' => [
-            'reference' => $payment->reference, 'status' => $earlier, 'amount' => 5000, 'currency' => 'GHS',
+            'reference' => $payment->reference, 'status' => 'failed', 'amount' => 5000, 'currency' => 'GHS',
         ]]),
     ]);
-    expect(PaystackConnect::verify($payment->reference)->status)->toBe($recorded);
+    expect(PaystackConnect::verify($payment->reference)->status)->toBe(PaymentStatus::Failed);
 
     // Asking again reports the same outcome only once.
     PaystackConnect::verify($payment->reference);
     Event::assertDispatchedTimes(PaymentFailed::class, 1);
 
+    // The customer tries another card on the same checkout.
     $this->postWebhook(chargeSuccess($payment))->assertOk();
 
     expect($payment->refresh()->status)->toBe(PaymentStatus::Success);
     Event::assertDispatchedTimes(PaymentSucceeded::class, 1);
-})->with([
-    'abandoned' => ['abandoned', PaymentStatus::Abandoned],
-    'failed' => ['failed', PaymentStatus::Failed],
-]);
+});
+
+it('applies a fee set before the amount in the amount\'s currency', function () {
+    $payment = PaystackConnect::checkout()
+        ->fee('10.00')
+        ->amount('100.00', 'NGN')
+        ->email('c@example.com')
+        ->seller($this->business)
+        ->create();
+
+    expect($payment->platformFee()->equals(Money::major('10.00', 'NGN')))->toBeTrue();
+});

@@ -8,7 +8,7 @@ use Otatechie\PaystackConnect\Facades\PaystackConnect;
 class ListBanksCommand extends Command
 {
     protected $signature = 'paystack-connect:banks
-        {country=ghana : Paystack country name: ghana, nigeria, kenya or "south africa"}
+        {country=ghana : Paystack country name: ghana, nigeria, kenya, "south africa", "côte d\'ivoire", egypt or rwanda}
         {--type= : Only this type, such as mobile_money}';
 
     protected $description = 'List the banks and mobile money networks Paystack supports, with their codes';

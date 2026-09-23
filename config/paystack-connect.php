@@ -7,8 +7,12 @@ return [
     | Paystack keys
     |--------------------------------------------------------------------------
     |
-    | The secret key signs every API call and every webhook Paystack sends
-    | you. Use your test key (sk_test_...) until you go live.
+    | The secret key authenticates every API call and is what Paystack signs
+    | webhooks with. Use your test keys (sk_test_..., pk_test_...) until you
+    | go live. Test and live keys each have their own dashboard settings.
+    |
+    | The package never uses the public key. It's here for your own frontend,
+    | if you open Paystack's inline popup with $payment->access_code.
     |
     */
 
@@ -18,6 +22,7 @@ return [
 
     'base_url' => env('PAYSTACK_BASE_URL', 'https://api.paystack.co'),
 
+    // Seconds to wait for each Paystack API call.
     'timeout' => 15,
 
     /*
@@ -25,7 +30,11 @@ return [
     | Currency
     |--------------------------------------------------------------------------
     |
-    | Used when an amount is given without a currency.
+    | Used when an amount is given without a currency. It must be one your
+    | Paystack account can charge: each account charges in its own country's
+    | currency (GHS, NGN, KES, ZAR, XOF, EGP or RWF), plus USD in some
+    | countries if Paystack has enabled it for you. Anything else is refused
+    | with "Currency not supported by merchant".
     |
     */
 
@@ -36,9 +45,18 @@ return [
     | Platform fees
     |--------------------------------------------------------------------------
     |
-    | Your cut of each payment that goes to a seller, in major units (GHS 5,
-    | not 500 pesewas). A fee is a percentage plus a flat amount, kept between
-    | min and max. Per-currency rules override the default.
+    | Your cut of each payment that goes to a seller. A payment without a
+    | seller has no fee: it's all yours anyway.
+    |
+    | A fee is a percentage plus a flat amount, kept between min and max, and
+    | never more than the payment. Amounts are in major units (GHS 5, not 500
+    | pesewas). Per-currency rules override the default; a currency without
+    | its own rule uses the default alone.
+    |
+    | Example with these settings: a GHS 50 payment gives 2.5% = GHS 1.25,
+    | raised to the GHS 5 minimum, so the seller receives GHS 45.
+    |
+    | To override the fee for one payment, use ->fee('10.00') at checkout.
     |
     */
 
@@ -62,7 +80,13 @@ return [
     | Who pays Paystack's transaction fee
     |--------------------------------------------------------------------------
     |
-    | 'account' means your platform pays it; 'subaccount' means the seller does.
+    | 'account': your platform pays it, out of your fee. With a GHS 5 fee and
+    | Paystack charging GHS 0.98, you keep GHS 4.02 and the seller gets their
+    | full share.
+    |
+    | 'subaccount': the seller pays it, out of their share.
+    |
+    | To choose for one payment, use ->bearer('subaccount') at checkout.
     |
     */
 
@@ -73,10 +97,17 @@ return [
     | Sellers
     |--------------------------------------------------------------------------
     |
-    | verify_accounts resolves the account holder's name with Paystack before
-    | a subaccount is created, so money never settles to a mistyped account.
-    | percentage_charge is the subaccount's default share for you when a
-    | payment has no explicit fee; checkout always sends an explicit fee.
+    | verify_accounts asks Paystack for the account holder's name before a
+    | subaccount is created, so money never settles to a mistyped account.
+    | Paystack only offers this lookup in Ghana and Nigeria; in other
+    | countries it's skipped and Paystack checks the account itself when the
+    | subaccount is created. In test mode, Paystack allows only 3 lookups of
+    | real accounts a day.
+    |
+    | percentage_charge is the share Paystack keeps for you when a payment
+    | has no fee of its own. Checkouts from this package always send their
+    | fee, so this only affects payments made outside it, such as Paystack
+    | payment pages or links for the seller.
     |
     */
 
@@ -90,8 +121,19 @@ return [
     | Webhooks
     |--------------------------------------------------------------------------
     |
-    | Point Paystack's webhook URL at https://your-app.com/{path}. Every
-    | request is checked against the x-paystack-signature header.
+    | Paystack tells your app about payments and refunds by calling this
+    | route. In your Paystack dashboard (Settings > API Keys & Webhooks), put
+    | https://your-app.com/{path} in the *Webhook URL* field, not the
+    | Callback URL field; each checkout sends its own callback URL. Test and
+    | live mode each have their own webhook URL.
+    |
+    | Paystack's servers must be able to reach the URL, so a local .test or
+    | localhost address won't work. To receive webhooks on your machine, use
+    | a tunnel such as `herd share`, `expose` or `ngrok`.
+    |
+    | Every request is checked against the x-paystack-signature header.
+    | middleware is added in front of that check, for example a throttle.
+    | Set enabled to false to register your own route instead.
     |
     | allowed_ips adds a second check on where the request came from. To
     | turn it on, uncomment Paystack's published webhook IPs below. Behind a
@@ -112,8 +154,10 @@ return [
         ],
     ],
 
+    // Seconds to cache Paystack's list of banks and mobile money networks.
     'banks_cache_ttl' => 60 * 60 * 24,
 
+    // Where webhook problems are logged. Leave empty for your default channel.
     'log_channel' => env('PAYSTACK_LOG_CHANNEL'),
 
 ];

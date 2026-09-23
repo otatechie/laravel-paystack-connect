@@ -13,7 +13,7 @@ use Illuminate\Database\Eloquent\Relations\MorphTo;
  * @property int $id
  * @property string $subaccount_code
  * @property string $business_name
- * @property string $settlement_bank
+ * @property string|null $settlement_bank Paystack's bank or network code.
  * @property string|null $bank_name
  * @property string $account_type
  * @property string $account_number
