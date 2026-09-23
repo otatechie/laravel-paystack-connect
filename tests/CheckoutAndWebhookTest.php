@@ -392,3 +392,24 @@ it('prunes processed webhook events after the configured number of days', functi
 
     expect(WebhookEvent::pluck('payload_hash')->sort()->values()->all())->toBe(['old-failed', 'recent-done']);
 });
+
+it('lets the thing being paid for find its payments', function () {
+    $invoice = Business::create(['name' => 'Invoice 42']); // any model using HasPaystackPayments
+    $other = Business::create(['name' => 'Invoice 43']);
+
+    expect($invoice->isPaidOnPaystack())->toBeFalse()
+        ->and($invoice->latestPaystackPayment())->toBeNull();
+
+    $first = PaystackConnect::checkout()->amount('50')->email('c@example.com')->for($invoice)->create();
+    $second = PaystackConnect::checkout()->amount('50')->email('c@example.com')->for($invoice)->create();
+    PaystackConnect::checkout()->amount('50')->email('c@example.com')->for($other)->create();
+
+    expect($invoice->paystackPayments()->pluck('id')->all())->toEqualCanonicalizing([$first->id, $second->id])
+        ->and($invoice->latestPaystackPayment()->is($second))->toBeTrue()
+        ->and($invoice->isPaidOnPaystack())->toBeFalse();
+
+    $this->postWebhook(chargeSuccess($first))->assertOk();
+
+    expect($invoice->isPaidOnPaystack())->toBeTrue()
+        ->and($other->isPaidOnPaystack())->toBeFalse();
+});

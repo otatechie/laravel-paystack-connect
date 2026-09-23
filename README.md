@@ -245,6 +245,22 @@ return redirect($payment->authorization_url);
 To use Paystack's popup instead of a redirect, pass `$payment->access_code`
 to Paystack Inline.
 
+To get from the invoice back to its payments, add `HasPaystackPayments` to
+the model you pass to `->for()`:
+
+```php
+use Otatechie\PaystackConnect\Concerns\HasPaystackPayments;
+
+class Invoice extends Model
+{
+    use HasPaystackPayments;
+}
+
+$invoice->paystackPayments;          // every attempt to pay it
+$invoice->latestPaystackPayment();   // the most recent one, or null
+$invoice->isPaidOnPaystack();        // a payment succeeded (and wasn't fully refunded)
+```
+
 With Inertia, a plain `redirect()` fails with a CORS error, because the
 browser won't follow an XHR redirect to another site. Use a full page visit
 instead:
