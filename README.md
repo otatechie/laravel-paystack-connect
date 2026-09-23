@@ -1,7 +1,7 @@
 # Laravel Paystack Connect
 
 [![Tests](https://github.com/otatechie/laravel-paystack-connect/actions/workflows/tests.yml/badge.svg)](https://github.com/otatechie/laravel-paystack-connect/actions/workflows/tests.yml)
-[![Latest version](https://img.shields.io/packagist/v/otatechie/laravel-paystack-connect?include_prereleases)](https://packagist.org/packages/otatechie/laravel-paystack-connect)
+[![Latest version](https://img.shields.io/packagist/v/otatechie/laravel-paystack-connect)](https://packagist.org/packages/otatechie/laravel-paystack-connect)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE.md)
 
 Marketplace payments for Laravel on Paystack. Your customers pay a seller, the
@@ -29,19 +29,21 @@ onboarding, fee rules, local records, and webhooks you can trust.
 
 **What it doesn't do:** each payment goes to one seller, so a cart with
 several sellers needs one payment per seller (or Paystack's
-[multi-split payments](https://paystack.com/docs/payments/multi-split-payments/), which this package
-doesn't wrap yet). Payouts to sellers happen
-through Paystack's settlements, not this package, and disputes are only
-surfaced as raw `WebhookReceived` events. For anything else Paystack offers,
+[multi-split payments](https://paystack.com/docs/payments/multi-split-payments/), which this
+package doesn't wrap yet). Payouts to sellers happen through Paystack's
+settlements, not this package, and disputes are only surfaced as raw
+`WebhookReceived` events. For anything else Paystack offers,
 `PaystackConnect::client()` gives you an authenticated client for its API.
 
 **Contents:** [Installation](#installation) ·
 [Onboard a seller](#onboard-a-seller) · [Take a payment](#take-a-payment) ·
 [React to payments](#react-to-payments) · [Refunds](#refunds) · [Fees](#fees) ·
-[Currencies](#currencies) · [Moving an existing app over](#moving-an-existing-app-over) ·
-[Money](#money) · [Errors](#errors) · [Testing your app](#testing-your-app) ·
+[Currencies](#currencies) · [Money](#money) · [Errors](#errors) ·
+[Moving an existing app over](#moving-an-existing-app-over) ·
+[Testing your app](#testing-your-app) ·
 [Trying it against Paystack's test mode](#trying-it-against-paystacks-test-mode) ·
-[Security](#security) · [Configuration](#configuration)
+[Security](#security) · [Configuration](#configuration) ·
+[Paystack references](#paystack-references)
 
 ## Requirements
 
@@ -113,8 +115,9 @@ $business->canReceivePaystackPayments(); // true
 ```
 
 In Ghana and Nigeria, the account holder's name is checked with Paystack
-first ([Paystack only offers this lookup there](https://paystack.com/docs/identity-verification/verify-account-number/)). If it can't be resolved, a `PaystackException` explains why and nothing
-is created. Paystack has no such lookup in other countries, so there it checks
+first ([Paystack only offers this lookup there](https://paystack.com/docs/identity-verification/verify-account-number/)).
+If it can't be resolved, a `PaystackException` explains why and nothing is
+created. Paystack has no such lookup in other countries, so there it checks
 the account itself when the subaccount is created. To skip the lookup, set
 `sellers.verify_accounts` to `false`.
 
@@ -204,7 +207,7 @@ use it in place of `country()`.
 
 Submitting the form again updates the same subaccount.
 
-Other helpers:
+### Other seller helpers
 
 ```php
 PaystackConnect::subaccounts()->for($business);             // the Subaccount, or null
@@ -347,15 +350,16 @@ Event::listen(function (WebhookReceived $event) {
 
 A checkout the customer hasn't paid yet stays `pending`, even though Paystack
 reports it as "abandoned" ([verify payments](https://paystack.com/docs/payments/verify-payments/)):
-they can still come back and pay. To clean up old
-unpaid checkouts, query pending payments older than you care about.
+they can still come back and pay. To clean up old unpaid checkouts, query
+pending payments older than you care about.
 
 Listeners run once per payment, even when Paystack retries a webhook or two
 deliveries overlap. If a listener throws, the webhook returns an error, the
-event is kept, and Paystack's next retry processes it again. In live mode Paystack retries every
-3 minutes for the first 4 tries, then hourly for 72 hours; in test mode,
-hourly for 10 hours. You can also resend events from the Paystack dashboard
-([webhooks](https://paystack.com/docs/payments/webhooks/)).
+event is kept, and it's processed again by Paystack's next retry or by
+`paystack-connect:retry-webhooks` (below), whichever comes first. In live
+mode Paystack retries every 3 minutes for the first 4 tries, then hourly for
+72 hours; in test mode, hourly for 10 hours. You can also resend events from
+the Paystack dashboard ([webhooks](https://paystack.com/docs/payments/webhooks/)).
 
 Paystack gives each delivery 30 seconds, so keep listeners quick and queue
 slow work such as emails, as above.
@@ -388,9 +392,10 @@ PaystackConnect::refund($payment, Money::major('50.00', 'GHS'));    // part of i
 
 Paystack processes refunds in the background, which can take a while. Until
 it does, the amount is held as pending (per refund, by Paystack's refund id),
-so the same money can't be refunded twice. Refunds made from the Paystack
-dashboard are recorded too when their webhook arrives. When the `refund.processed` webhook arrives, the payment's
-`refunded_amount` goes up and `PaymentRefunded` is dispatched. Once the whole
+so the same money can't be refunded twice. When the `refund.processed`
+webhook arrives, the payment's `refunded_amount` goes up and
+`PaymentRefunded` is dispatched. Refunds made from the Paystack dashboard are
+recorded the same way. Once the whole
 amount is back, the status becomes `refunded`. If Paystack fails the refund
 (`refund.failed`), the amount can be refunded again. If Paystack needs the
 customer's bank details first (`refund.needs-attention`), the refund stays
@@ -435,8 +440,8 @@ set to `account`). Set it to `subaccount` to have sellers pay it instead.
 Each Paystack account charges in its own country's currency, plus USD in some
 countries if Paystack has enabled it for you. Minimums and the XOF rule below
 are from Paystack's [supported currency table](https://paystack.com/docs/api/#supported-currency);
-Egypt and Rwanda aren't in that table yet, though Paystack's API lists them. Anything else is refused with
-"Currency not supported by merchant".
+Egypt and Rwanda aren't in that table yet, though Paystack's API lists them.
+Anything else is refused with "Currency not supported by merchant".
 
 | Country | Currency | Paystack's minimum | Account holder lookup |
 |---|---|---|---|
@@ -449,9 +454,9 @@ Egypt and Rwanda aren't in that table yet, though Paystack's API lists them. Any
 | Rwanda | RWF | not published | no |
 
 USD has a minimum of USD 2.00; Paystack documents it for Kenya and Nigeria.
-XOF and RWF have no subunit, so amounts must
-be whole: `Money::major('10.50', 'XOF')` throws instead of Paystack silently
-charging XOF 10. Fees in these currencies are rounded to whole units.
+XOF and RWF have no subunit, so amounts must be whole:
+`Money::major('10.50', 'XOF')` throws instead of Paystack silently charging
+XOF 10. Fees in these currencies are rounded to whole units.
 
 ## Money
 
@@ -467,7 +472,7 @@ $price = Money::minor(1999, 'GHS');      // from minor units, as Paystack sends 
 $price->minor;                          // 1999
 $price->toMajorString();                // "19.99"
 (string) $price;                        // "GHS 19.99"
-$price->add($other)->subtract($fee);    // same currency only
+$price->add(Money::major('5.00', 'GHS')); // GHS 24.99; mixing currencies throws
 json_encode($price);                    // {"amount":1999,"currency":"GHS","formatted":"GHS 19.99"}
 ```
 
@@ -570,10 +575,10 @@ The fake throws on any other endpoint. For those, use `Http::fake()`.
 
 Every webhook's signature is checked against the raw request body. To also
 accept webhooks only from Paystack's servers, uncomment their IP addresses
-under `webhook.allowed_ips` in the config (the three IPs Paystack publishes on
-its [webhooks](https://paystack.com/docs/payments/webhooks/) page). If your app sits behind a proxy or
-load balancer, set up Laravel's trusted proxies first, or every webhook will
-be rejected.
+under `webhook.allowed_ips` in the config (the three IPs Paystack publishes
+on its [webhooks](https://paystack.com/docs/payments/webhooks/) page). If your app sits behind a
+proxy or load balancer, set up Laravel's trusted proxies first, or every
+webhook will be rejected.
 
 To add middleware in front of the webhook, such as a throttle, list it under
 `webhook.middleware`. To register the route yourself, set `webhook.enabled`
