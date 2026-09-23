@@ -137,6 +137,12 @@ return [
     | middleware is added in front of that check, for example a throttle.
     | Set enabled to false to register your own route instead.
     |
+    | keep_days is how long processed events are kept. Schedule
+    | `model:prune --model=Otatechie\PaystackConnect\Models\WebhookEvent` to
+    | remove older ones; set it to null to keep them forever. Events that
+    | failed are always kept, so `paystack-connect:retry-webhooks` can
+    | process them again.
+    |
     | allowed_ips adds a second check on where the request came from. To
     | turn it on, uncomment Paystack's published webhook IPs below. Behind a
     | proxy or load balancer (Cloudflare, AWS ELB, Forge with a balancer),
@@ -149,6 +155,7 @@ return [
         'enabled' => true,
         'path' => 'paystack/webhook',
         'middleware' => [],
+        'keep_days' => 30,
         'allowed_ips' => [
             // '52.31.139.75',
             // '52.49.173.169',

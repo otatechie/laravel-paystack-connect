@@ -7,6 +7,7 @@ use Otatechie\PaystackConnect\Enums\PaymentStatus;
 use Otatechie\PaystackConnect\Events\PaymentAmountMismatch;
 use Otatechie\PaystackConnect\Events\PaymentFailed;
 use Otatechie\PaystackConnect\Events\PaymentSucceeded;
+use Otatechie\PaystackConnect\Events\WebhookHandled;
 use Otatechie\PaystackConnect\Events\WebhookReceived;
 use Otatechie\PaystackConnect\Exceptions\PaystackException;
 use Otatechie\PaystackConnect\Facades\PaystackConnect;
@@ -339,3 +340,55 @@ it('turns a non-JSON reply from Paystack into a PaystackException', function () 
 
     PaystackConnect::verify('anything');
 })->throws(PaystackException::class);
+
+it('announces a webhook after it has been handled, so listeners see the saved payment', function () {
+    $seen = null;
+    Event::listen(WebhookHandled::class, function (WebhookHandled $event) use (&$seen) {
+        $seen = Payment::where('reference', $event->payload['data']['reference'])->first()->status;
+    });
+    $payment = PaystackConnect::checkout()->amount('50')->email('c@example.com')->create();
+
+    $this->postWebhook(chargeSuccess($payment))->assertOk();
+    $this->postWebhook(chargeSuccess($payment))->assertJson(['status' => 'duplicate']);
+
+    expect($seen)->toBe(PaymentStatus::Success);
+});
+
+it('retries failed webhooks from the database with a command', function () {
+    $payment = PaystackConnect::checkout()->amount('50')->email('c@example.com')->create();
+
+    $fail = true;
+    Event::listen(WebhookReceived::class, function () use (&$fail) {
+        if ($fail) {
+            throw new RuntimeException('Mail server down');
+        }
+    });
+
+    $this->postWebhook(chargeSuccess($payment))->assertStatus(500);
+    $fail = false;
+
+    $this->artisan('paystack-connect:retry-webhooks')
+        ->expectsOutputToContain('1 retried, 0 still failing')
+        ->assertSuccessful();
+
+    expect(WebhookEvent::first()->processed_at)->not->toBeNull()
+        ->and(WebhookEvent::first()->error)->toBeNull();
+
+    // Nothing left to retry.
+    $this->artisan('paystack-connect:retry-webhooks')->expectsOutputToContain('0 retried');
+});
+
+it('prunes processed webhook events after the configured number of days', function () {
+    config()->set('paystack-connect.webhook.keep_days', 30);
+    $make = fn (string $hash, ?string $processed, int $days) => WebhookEvent::create([
+        'event' => 'charge.success', 'payload_hash' => $hash, 'payload' => [], 'processed_at' => $processed,
+        'created_at' => now()->subDays($days), 'updated_at' => now()->subDays($days),
+    ]);
+    $make('old-done', now()->subDays(40)->toDateTimeString(), 40);
+    $make('recent-done', now()->subDay()->toDateTimeString(), 1);
+    $make('old-failed', null, 40); // never processed: kept so it can be retried
+
+    $this->artisan('model:prune', ['--model' => WebhookEvent::class])->assertSuccessful();
+
+    expect(WebhookEvent::pluck('payload_hash')->sort()->values()->all())->toBe(['old-failed', 'recent-done']);
+});

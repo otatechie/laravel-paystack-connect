@@ -323,7 +323,8 @@ Event::listen(function (PaymentSucceeded $event) {
 | `PaymentAmountMismatch` | Paystack charged a different amount or currency. The payment is not marked paid; review it. |
 | `PaymentRefunded` | Paystack processed a refund. `$event->amount` is how much went back. |
 | `SubaccountConnected` | A seller's subaccount was created or updated. |
-| `WebhookReceived` | Any verified webhook, including events this package doesn't handle itself. |
+| `WebhookReceived` | Any verified webhook, including events this package doesn't handle itself. Fires before the webhook is marked handled. |
+| `WebhookHandled` | A webhook was handled and the payment saved. Listen here when you need the payment's new state. |
 
 To handle an event the package doesn't, such as a dispute, listen for
 `WebhookReceived`. It carries the event name and Paystack's full payload:
@@ -352,6 +353,25 @@ hourly for 10 hours. You can also resend events from the Paystack dashboard
 
 Paystack gives each delivery 30 seconds, so keep listeners quick and queue
 slow work such as emails, as above.
+
+### Keeping webhooks healthy
+
+Add these to your scheduler (`routes/console.php`):
+
+```php
+use Illuminate\Support\Facades\Schedule;
+use Otatechie\PaystackConnect\Models\WebhookEvent;
+
+// Process again any webhook that failed, without waiting for Paystack.
+Schedule::command('paystack-connect:retry-webhooks')->hourly();
+
+// Remove processed webhooks older than webhook.keep_days (30 by default).
+Schedule::command('model:prune', ['--model' => WebhookEvent::class])->daily();
+```
+
+Failed webhooks are never pruned, so they can always be retried. You can also
+run `php artisan paystack-connect:retry-webhooks` by hand; it lists anything
+still failing.
 
 ## Refunds
 

@@ -6,6 +6,11 @@ All notable changes to this package are recorded here. The format follows
 
 ## Unreleased
 
+### Added
+- `paystack-connect:retry-webhooks` processes failed webhooks again from the database, without waiting for Paystack's retries.
+- `WebhookHandled` event, fired after a webhook is handled and the payment saved.
+- Processed webhook events can be pruned with `model:prune`; `webhook.keep_days` (default 30) sets how long they're kept. Failed ones are always kept.
+
 ### Changed
 - The package is on Packagist; installing no longer needs a `repositories` entry.
 - CI also tests PHP 8.5 on Laravel 13.

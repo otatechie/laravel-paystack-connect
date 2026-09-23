@@ -6,6 +6,7 @@ use Illuminate\Contracts\Cache\Repository as Cache;
 use Illuminate\Support\Facades\Route;
 use Otatechie\PaystackConnect\Commands\ImportSubaccountsCommand;
 use Otatechie\PaystackConnect\Commands\ListBanksCommand;
+use Otatechie\PaystackConnect\Commands\RetryWebhooksCommand;
 use Otatechie\PaystackConnect\Http\Controllers\WebhookController;
 use Otatechie\PaystackConnect\Http\Middleware\VerifyPaystackSignature;
 use Otatechie\PaystackConnect\Http\PaystackClient;
@@ -23,6 +24,7 @@ class PaystackConnectServiceProvider extends PackageServiceProvider
             ->hasCommands([
                 ListBanksCommand::class,
                 ImportSubaccountsCommand::class,
+                RetryWebhooksCommand::class,
             ]);
     }
 
