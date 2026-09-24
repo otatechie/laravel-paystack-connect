@@ -4,9 +4,9 @@
 [![Latest version](https://img.shields.io/packagist/v/otatechie/laravel-paystack-connect)](https://packagist.org/packages/otatechie/laravel-paystack-connect)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE.md)
 
-Marketplace payments for Laravel on Paystack. Your customers pay a seller, the
-seller's share settles straight to their bank or mobile money wallet, and your
-platform keeps a fee.
+Marketplace payments for Laravel on Paystack. Your customers pay a seller,
+Paystack pays the seller's share into their bank or mobile money wallet without
+it passing through you, and your platform keeps a fee.
 
 Paystack's API gives you subaccounts and split payments. This package gives
 you everything around them that you would otherwise build by hand: seller
@@ -35,7 +35,29 @@ settlements, not this package, and disputes are only surfaced as raw
 `WebhookReceived` events. For anything else Paystack offers,
 `PaystackConnect::client()` gives you an authenticated client for its API.
 
-**Contents:** [Installation](#installation) ·
+## How it works
+
+1. **You connect each seller once.** Their bank or mobile money account
+   becomes a Paystack *subaccount*, and the package records which of your
+   models it belongs to.
+2. **At checkout you name the seller.** The customer pays on Paystack's
+   payment form. The money goes to Paystack, never to you.
+3. **Paystack splits the payment itself:** your platform fee to your Paystack
+   balance, the rest to the seller's subaccount, and Paystack's own fee taken
+   from your share or the seller's, depending on `bearer`. The package never
+   holds or moves money; it tells Paystack how to split, and records what
+   happened.
+4. **Paystack pays out** to you and to each seller on its settlement schedule
+   (usually the next business day), not the moment the customer pays.
+5. **Your app learns the outcome** from Paystack's webhook, which is the
+   source of truth, or from `verify()` on your callback page, whichever
+   arrives first. Either way the payment is settled once, and your listeners
+   run once.
+
+Payments without a seller, such as a donation or your own shop's orders, skip
+the split: the whole amount goes to your balance and no fee is taken.
+
+**Contents:** [How it works](#how-it-works) · [Installation](#installation) ·
 [Onboard a seller](#onboard-a-seller) · [Take a payment](#take-a-payment) ·
 [React to payments](#react-to-payments) · [Refunds](#refunds) · [Fees](#fees) ·
 [Currencies](#currencies) · [Money](#money) · [Errors](#errors) ·
