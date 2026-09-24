@@ -47,8 +47,9 @@ settlements, not this package, and disputes are only surfaced as raw
    from your share or the seller's, depending on `bearer`. The package never
    holds or moves money; it tells Paystack how to split, and records what
    happened.
-4. **Paystack pays out** to you and to each seller on its settlement schedule
-   (usually the next business day), not the moment the customer pays.
+4. **Paystack pays out** to you and to each seller on its settlement schedule,
+   not the moment the customer pays. In Ghana and Nigeria that's the next
+   working day by default ([Paystack: getting your money](https://support.paystack.com/en/articles/2125314)).
 5. **Your app learns the outcome** from Paystack's webhook, which is the
    source of truth, or from `verify()` on your callback page, whichever
    arrives first. Either way the payment is settled once, and your listeners
