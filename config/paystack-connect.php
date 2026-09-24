@@ -30,11 +30,8 @@ return [
     | Currency
     |--------------------------------------------------------------------------
     |
-    | Used when an amount is given without a currency. It must be one your
-    | Paystack account can charge: each account charges in its own country's
-    | currency (GHS, NGN, KES, ZAR, XOF, EGP or RWF), plus USD in some
-    | countries if Paystack has enabled it for you. Anything else is refused
-    | with "Currency not supported by merchant".
+    | Used when an amount is given without a currency. Anything your Paystack
+    | account can't charge is refused by Paystack.
     |
     */
 
@@ -105,8 +102,7 @@ return [
     | subaccount is created, so money never settles to a mistyped account.
     | Paystack only offers this lookup in Ghana and Nigeria; in other
     | countries it's skipped and Paystack checks the account itself when the
-    | subaccount is created. In test mode, Paystack allows only 3 lookups of
-    | real accounts a day.
+    | subaccount is created.
     |
     | percentage_charge is the share Paystack keeps for you when a payment
     | has no fee of its own. Checkouts from this package always send their
@@ -130,10 +126,6 @@ return [
     | https://your-app.com/{path} in the *Webhook URL* field, not the
     | Callback URL field; each checkout sends its own callback URL. Test and
     | live mode each have their own webhook URL.
-    |
-    | Paystack's servers must be able to reach the URL, so a local .test or
-    | localhost address won't work. To receive webhooks on your machine, use
-    | a tunnel such as `herd share`, `expose` or `ngrok`.
     |
     | Every request is checked against the x-paystack-signature header.
     | middleware is added in front of that check, for example a throttle.
