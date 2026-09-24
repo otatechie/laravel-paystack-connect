@@ -50,6 +50,8 @@ return [
     | Your cut of each payment that goes to a seller. A payment without a
     | seller has no fee: it's all yours anyway.
     |
+    | The package works this out at every checkout; Paystack does the split.
+    |
     | A fee is a percentage plus a flat amount, kept between min and max, and
     | never more than the payment. Amounts are in major units (GHS 5, not 500
     | pesewas). Per-currency rules override the default; a currency without
