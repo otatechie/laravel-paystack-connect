@@ -289,15 +289,21 @@ For the popup, return the access code instead of redirecting, and verify the
 payment on your server when the popup reports success:
 
 ```php
-// Controller: start the payment, but don't redirect.
+// routes/web.php
+Route::post('/pay', [PaymentController::class, 'store']);
+Route::get('/pay/verify/{reference}', [PaymentController::class, 'verify']);
+
+// PaymentController: start the payment and hand back the access code.
 public function store(Request $request)
 {
-    $payment = PaystackConnect::checkout()->amount($request->amount)->email($request->email)->create();
+    $data = $request->validate(['amount' => ['required', 'numeric', 'min:1'], 'email' => ['required', 'email']]);
+
+    $payment = PaystackConnect::checkout()->amount((string) $data['amount'])->email($data['email'])->create();
 
     return response()->json(['access_code' => $payment->access_code, 'reference' => $payment->reference]);
 }
 
-// Controller: the page calls this after paying.
+// PaymentController: the page calls this once the popup reports success.
 public function verify(string $reference)
 {
     return response()->json(['paid' => (bool) PaystackConnect::verify($reference)?->isSuccessful()]);
@@ -307,10 +313,26 @@ public function verify(string $reference)
 ```html
 <script src="https://js.paystack.co/v2/inline.js"></script>
 <script>
-    // After posting your form to store() and getting { access_code, reference } back:
-    new PaystackPop().resumeTransaction(access_code, {
-        onSuccess: () => fetch(`/payments/verify/${reference}`).then(/* show the result */),
-        onCancel: () => { /* the customer closed the popup */ },
+    document.querySelector('#pay-form').addEventListener('submit', async (event) => {
+        event.preventDefault();
+
+        // 1. Ask your server to start the payment.
+        const response = await fetch('/pay', {
+            method: 'POST',
+            headers: { 'X-CSRF-TOKEN': '{{ csrf_token() }}', 'Accept': 'application/json' },
+            body: new FormData(event.target),
+        });
+        const { access_code, reference } = await response.json();
+
+        // 2. Open Paystack's form on top of the page.
+        new PaystackPop().resumeTransaction(access_code, {
+            // 3. Confirm with your server before showing anything as paid.
+            onSuccess: async () => {
+                const { paid } = await fetch(`/pay/verify/${reference}`).then((r) => r.json());
+                alert(paid ? 'Thank you!' : 'The payment did not go through.');
+            },
+            onCancel: () => alert('Payment cancelled.'),
+        });
     });
 </script>
 ```
@@ -344,8 +366,8 @@ $invoice->isPaidOnPaystack();        // a payment succeeded (and wasn't fully re
 
 One invoice can have several payments, because each try is its own payment:
 a customer might give up, then come back and pay. `isPaidOnPaystack()` looks
-for a success among all of them. Payments not made for anything, such as
-donations, don't need `->for()` or the trait.
+for a success among all of them. A payment that isn't for a record of yours,
+such as a donation, doesn't need `->for()` or the trait.
 
 ### The payment record
 
