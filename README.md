@@ -242,33 +242,6 @@ $payment = PaystackConnect::checkout()
 return redirect($payment->authorization_url);
 ```
 
-To use Paystack's popup instead of a redirect, pass `$payment->access_code`
-to Paystack Inline.
-
-To get from the invoice back to its payments, add `HasPaystackPayments` to
-the model you pass to `->for()`:
-
-```php
-use Otatechie\PaystackConnect\Concerns\HasPaystackPayments;
-
-class Invoice extends Model
-{
-    use HasPaystackPayments;
-}
-
-$invoice->paystackPayments;          // every attempt to pay it
-$invoice->latestPaystackPayment();   // the most recent one, or null
-$invoice->isPaidOnPaystack();        // a payment succeeded (and wasn't fully refunded)
-```
-
-With Inertia, a plain `redirect()` fails with a CORS error, because the
-browser won't follow an XHR redirect to another site. Use a full page visit
-instead:
-
-```php
-return Inertia::location($payment->authorization_url);
-```
-
 The fee comes from your config and is sent to Paystack as the transaction's
 `transaction_charge`, a flat amount that goes to your account whatever the
 subaccount's percentage says ([split payments](https://paystack.com/docs/payments/split-payments/)).
@@ -291,6 +264,88 @@ letters, digits, `-`, `.`, `=` and `_` ([Transaction API](https://paystack.com/d
 
 Without `->seller()`, the whole amount goes to your own Paystack balance and
 no fee is taken.
+
+### Redirect or popup
+
+The customer pays on Paystack's own payment form. Every checkout gives you two
+ways to show it, for the same transaction:
+
+- **Redirect** with `$payment->authorization_url`: the customer leaves your
+  site for Paystack's page, pays, and comes back to your `callbackUrl`. No
+  JavaScript needed. This is what the example above does.
+- **Popup** with `$payment->access_code`: Paystack's JavaScript opens the form
+  on top of your page, and the customer never leaves. Smoother, but it needs a
+  little JavaScript.
+
+With Inertia, a plain `redirect()` to Paystack fails with a CORS error,
+because the browser won't follow an XHR redirect to another site. Use a full
+page visit instead, or the popup:
+
+```php
+return Inertia::location($payment->authorization_url);
+```
+
+For the popup, return the access code instead of redirecting, and verify the
+payment on your server when the popup reports success:
+
+```php
+// Controller: start the payment, but don't redirect.
+public function store(Request $request)
+{
+    $payment = PaystackConnect::checkout()->amount($request->amount)->email($request->email)->create();
+
+    return response()->json(['access_code' => $payment->access_code, 'reference' => $payment->reference]);
+}
+
+// Controller: the page calls this after paying.
+public function verify(string $reference)
+{
+    return response()->json(['paid' => (bool) PaystackConnect::verify($reference)?->isSuccessful()]);
+}
+```
+
+```html
+<script src="https://js.paystack.co/v2/inline.js"></script>
+<script>
+    // After posting your form to store() and getting { access_code, reference } back:
+    new PaystackPop().resumeTransaction(access_code, {
+        onSuccess: () => fetch(`/payments/verify/${reference}`).then(/* show the result */),
+        onCancel: () => { /* the customer closed the popup */ },
+    });
+</script>
+```
+
+Never treat the popup's success as final: it runs in the customer's browser,
+which can be tampered with. Only your server's `verify()` (or the webhook)
+decides whether the payment went through. For the exact options of
+Paystack's script, see [accept payments](https://paystack.com/docs/payments/accept-payments/).
+
+### Linking a payment to what it's for
+
+`->for($invoice)` records what a payment is for, so from the payment you can
+always find the invoice: `$payment->payable`. That's handy in a listener
+("this payment succeeded; which invoice was it?").
+
+Your app usually needs the other direction: starting from the invoice, has it
+been paid? Add `HasPaystackPayments` to the model you pass to `->for()`:
+
+```php
+use Otatechie\PaystackConnect\Concerns\HasPaystackPayments;
+
+class Invoice extends Model
+{
+    use HasPaystackPayments;
+}
+
+$invoice->paystackPayments;          // every attempt to pay it
+$invoice->latestPaystackPayment();   // the most recent one, or null
+$invoice->isPaidOnPaystack();        // a payment succeeded (and wasn't fully refunded)
+```
+
+One invoice can have several payments, because each try is its own payment:
+a customer might give up, then come back and pay. `isPaidOnPaystack()` looks
+for a success among all of them. Payments not made for anything, such as
+donations, don't need `->for()` or the trait.
 
 ### The payment record
 
