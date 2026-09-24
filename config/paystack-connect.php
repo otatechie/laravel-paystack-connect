@@ -126,8 +126,10 @@ return [
     | Every request's signature is checked; middleware runs before that.
     | Set enabled to false to register your own route instead.
     |
-    | keep_days: how long processed events are kept before `model:prune`
-    | removes them (null keeps them forever). Failed events are always kept.
+    | keep_days: how long processed events are kept (null keeps them forever).
+    | It only takes effect if you schedule
+    | `model:prune --model=Otatechie\PaystackConnect\Models\WebhookEvent`.
+    | Failed events are always kept, for `paystack-connect:retry-webhooks`.
     |
     | allowed_ips: uncomment to accept only Paystack's servers. Behind a proxy
     | or load balancer, set up Laravel's trusted proxies first, or every
