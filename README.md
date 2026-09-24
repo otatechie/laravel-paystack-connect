@@ -681,6 +681,9 @@ to `false` and point your route at `WebhookController`, keeping the
 Sellers' account numbers are encrypted in the database and left out of the
 model's JSON. Only the last four digits are stored in the clear, for display.
 
+To report a vulnerability, see [SECURITY.md](SECURITY.md). Please don't open a
+public issue.
+
 ## Configuration
 
 Publish `config/paystack-connect.php` to change any of these. Each setting is
