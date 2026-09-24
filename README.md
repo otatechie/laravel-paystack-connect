@@ -15,12 +15,10 @@ onboarding, fee rules, local records, and webhooks you can trust.
 - **Exact money.** Amounts are integers in pesewas, kobo or cents. `19.99` is
   always `1999`, never `1998`.
 - **Seller onboarding.** Bank and mobile money lists come live from Paystack,
-  the account holder's name is verified before any subaccount is created
-  (in Ghana and Nigeria, where Paystack offers it), and
-  connecting the same seller twice updates their subaccount instead of
-  creating a duplicate.
+  account holders are verified where Paystack allows it, and connecting a
+  seller twice updates their subaccount instead of creating a duplicate.
 - **Platform fees.** A percentage plus a flat amount, with a minimum and a
-  maximum per currency, never more than the payment itself.
+  maximum per currency.
 - **Webhooks that are safe to trust.** Signatures are checked against the raw
   body, every event is stored once so Paystack's retries are ignored, and a
   payment is only marked paid when the amount and currency match exactly.
@@ -96,7 +94,8 @@ PAYSTACK_CURRENCY=GHS
 In your Paystack dashboard, under Settings → API Keys & Webhooks, put
 `https://your-app.com/paystack/webhook` in the **Webhook URL** field. Not the
 Callback URL field: each checkout sends its own. Test and live mode each have
-their own webhook URL. The path can be changed in `config/paystack-connect.php`.
+their own webhook URL, and Paystack must be able to reach it: a `.test` or
+`localhost` address won't work.
 
 ## Onboard a seller
 
@@ -207,23 +206,8 @@ class PayoutAccountController
 }
 ```
 
-```blade
-<form method="POST" action="{{ route('payout-account.update') }}">
-    @csrf
-    @method('PUT')
-
-    <select name="bank_code" required>
-        @foreach ($banks as $bank)
-            <option value="{{ $bank['code'] }}">{{ $bank['name'] }}</option>
-        @endforeach
-    </select>
-
-    <input name="account_number" placeholder="Account or mobile money number" required>
-    @error('account_number') <p>{{ $message }}</p> @enderror
-
-    <button>Connect payout account</button>
-</form>
-```
+The view needs a `<select name="bank_code">` of `$banks` (value `code`,
+label `name`), an `account_number` input, and a submit button.
 
 If your sellers are in several countries, let them pick a country first and
 use it in place of `country()`.
@@ -268,8 +252,8 @@ return redirect($payment->authorization_url);
 The fee comes from your config and is sent to Paystack as the transaction's
 `transaction_charge`, a flat amount that goes to your account whatever the
 subaccount's percentage says ([split payments](https://paystack.com/docs/payments/split-payments/)).
-To override it for one payment, use `->fee('10.00')`. To choose who pays
-Paystack's own fee, use `->bearer('subaccount')`.
+To override it for one payment, use `->fee('10.00')`; to make the seller pay
+Paystack's fee for one payment, use `->bearer('subaccount')` (see [Fees](#fees)).
 
 Other options:
 
@@ -333,31 +317,15 @@ public function verify(string $reference)
 }
 ```
 
-```html
-<script src="https://js.paystack.co/v2/inline.js"></script>
-<script>
-    document.querySelector('#pay-form').addEventListener('submit', async (event) => {
-        event.preventDefault();
+In the page, post your form to `/pay` with `fetch()`, then open the popup
+with the code it returns:
 
-        // 1. Ask your server to start the payment.
-        const response = await fetch('/pay', {
-            method: 'POST',
-            headers: { 'X-CSRF-TOKEN': '{{ csrf_token() }}', 'Accept': 'application/json' },
-            body: new FormData(event.target),
-        });
-        const { access_code, reference } = await response.json();
-
-        // 2. Open Paystack's form on top of the page.
-        new PaystackPop().resumeTransaction(access_code, {
-            // 3. Confirm with your server before showing anything as paid.
-            onSuccess: async () => {
-                const { paid } = await fetch(`/pay/verify/${reference}`).then((r) => r.json());
-                alert(paid ? 'Thank you!' : 'The payment did not go through.');
-            },
-            onCancel: () => alert('Payment cancelled.'),
-        });
-    });
-</script>
+```js
+// <script src="https://js.paystack.co/v2/inline.js"></script>
+new PaystackPop().resumeTransaction(access_code, {
+    onSuccess: () => fetch(`/pay/verify/${reference}`), // then show the result
+    onCancel: () => { /* the customer closed the popup */ },
+});
 ```
 
 Never treat the popup's success as final: it runs in the customer's browser,
@@ -682,9 +650,8 @@ The fake throws on any other endpoint. For those, use `Http::fake()`.
   in test mode, and its test bank code `001` works for lookups but not for
   creating a subaccount. Neither is in Paystack's docs; both come from its
   API's own error messages.
-- Webhooks need a public URL. A `.test` or `localhost` address won't work, so
-  use a tunnel such as `herd share`, `expose` or `ngrok`, and put
-  `https://<tunnel>/paystack/webhook` in the test Webhook URL field.
+- Webhooks need a public URL, so on your machine use a tunnel such as
+  `herd share`, `expose` or `ngrok` (see [Installation](#installation)).
 - Test refunds can stay pending for a while before Paystack processes them.
 
 ## Security
