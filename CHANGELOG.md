@@ -4,6 +4,12 @@ All notable changes to this package are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow
 [Semantic Versioning](https://semver.org/).
 
+## 1.2.0 — 2026-09-24
+
+### Changed
+- **Default platform fees.** The old defaults took too much on small payments (a GHS 5 minimum is half of a GHS 10 sale) and lost money elsewhere: 2.5% doesn't cover Paystack's own fee on Kenyan card payments or in South Africa, and the GHS 50 cap fell below Paystack's uncapped 1.95% on large payments. New defaults: 2.5% with no minimum or maximum, except NGN (minimum NGN 250, maximum NGN 5,000), KES (3%) and ZAR (3.5% + R1.50). A test checks that each covers Paystack's published fee. **If you haven't published the config and relied on the old minimums or maximums, add them to your config.**
+- The config and README explain that your fee must cover Paystack's when your platform pays it, and list Paystack's rates.
+
 ## 1.1.0 — 2026-09-23
 
 ### Added

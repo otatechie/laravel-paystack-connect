@@ -499,25 +499,35 @@ $payment->isRefunded();          // false until everything is back
 'fees' => [
     'default' => ['percentage' => 2.5, 'flat' => 0, 'min' => null, 'max' => null],
     'currencies' => [
-        'GHS' => ['min' => 5, 'max' => 50],
+        'NGN' => ['min' => 250, 'max' => 5000],
+        'KES' => ['percentage' => 3],
+        'ZAR' => ['percentage' => 3.5, 'flat' => 1.50],
     ],
 ],
 ```
 
-Amounts are in major units (GHS 5, not 500 pesewas). A currency without its
-own rule uses the default alone. Payments without a seller have no fee.
-
-The fee is never more than the payment, which means a payment below the
-minimum fee goes entirely to you: a GHS 2 payment with a GHS 5 minimum leaves
-the seller with nothing. If sellers sell cheap items, set a lower minimum or
-enforce a minimum price. To preview a fee:
+A fee is a percentage plus a flat amount, kept between a minimum and a
+maximum. Amounts are in major units (NGN 250, not 25,000 kobo), and a
+currency without its own rule uses the default. Payments without a seller
+have no fee. To preview one:
 
 ```php
-PaystackConnect::feeFor(Money::major('100.00', 'GHS')); // GHS 5.00
+PaystackConnect::feeFor(Money::major('10.00', 'GHS')); // GHS 0.25; the seller gets GHS 9.75
 ```
 
-By default your platform pays Paystack's own fee, out of your fee (`bearer`
-set to `account`). Set it to `subaccount` to have sellers pay it instead.
+**Your fee must cover Paystack's.** By default your platform pays Paystack's
+own fee out of your fee (`bearer` set to `account`), so a fee below
+Paystack's loses you money on every payment. The defaults above are set to
+cover Paystack's published rates: 1.95% in Ghana; 1.5% + NGN 100 in Nigeria
+(the NGN 100 only over NGN 2,500, capped at NGN 2,000); up to 2.9% in Kenya
+(cards); 2.9% + R1 + VAT in South Africa
+([pricing](https://paystack.com/pricing)). Paystack hasn't published rates for
+Côte d'Ivoire, Egypt and Rwanda, so check yours there. Alternatively, set
+`bearer` to `subaccount` to have sellers pay Paystack's fee instead.
+
+The fee is never more than the payment, so a minimum above a small payment
+takes all of it: with a NGN 250 minimum, a NGN 200 payment leaves the seller
+nothing.
 
 ## Currencies
 

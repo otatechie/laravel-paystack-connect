@@ -71,13 +71,13 @@ it('starts a split payment with the fee, subaccount and exact amount', function 
 
     expect($payment->status)->toBe(PaymentStatus::Pending)
         ->and($payment->amount)->toBe(1999)
-        ->and($payment->platform_fee)->toBe(500) // the GHS 5 minimum
-        ->and($payment->sellerShare()->toMajorString())->toBe('14.99')
+        ->and($payment->platform_fee)->toBe(50) // 2.5%, rounded to the pesewa
+        ->and($payment->sellerShare()->toMajorString())->toBe('19.49')
         ->and($payment->authorization_url)->toBe('https://checkout.paystack.com/abc123');
 
     Http::assertSent(fn (Request $request) => $request['amount'] === 1999
         && $request['subaccount'] === 'ACCT_kofi'
-        && $request['transaction_charge'] === 500
+        && $request['transaction_charge'] === 50
         && $request['bearer'] === 'account'
         && $request['currency'] === 'GHS'
         && json_decode($request['metadata'], true)['paystack_connect_payment_id'] === $payment->id);

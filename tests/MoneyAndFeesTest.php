@@ -39,22 +39,52 @@ it('refuses to mix currencies', function () {
     Money::minor(100, 'GHS')->add(Money::minor(100, 'NGN'));
 })->throws(InvalidAmount::class);
 
-it('charges the percentage fee within the min and max for each currency', function (string $amount, string $currency, string $fee) {
-    expect(PaystackConnect::feeFor(Money::major($amount, $currency))->toMajorString())->toBe($fee);
+function useFeeRules(array $rules): void
+{
+    config()->set('paystack-connect.fees', $rules);
+    app()->forgetInstance(Fees::class);
+}
+
+it('charges the percentage fee within the min and max', function (string $amount, string $fee) {
+    useFeeRules(['default' => ['percentage' => 2.5], 'currencies' => ['GHS' => ['min' => 5, 'max' => 50]]]);
+
+    expect(PaystackConnect::feeFor(Money::major($amount, 'GHS'))->toMajorString())->toBe($fee);
 })->with([
-    'min applies' => ['100.00', 'GHS', '5.00'],    // 2.5% = 2.50, raised to the GHS 5 minimum
-    'percentage applies' => ['1000.00', 'GHS', '25.00'],
-    'max applies' => ['4000.00', 'GHS', '50.00'],  // 2.5% = 100, capped at GHS 50
-    'NGN rules' => ['10000.00', 'NGN', '500.00'],
+    'min applies' => ['100.00', '5.00'],          // 2.5% = 2.50, raised to the GHS 5 minimum
+    'percentage applies' => ['1000.00', '25.00'],
+    'max applies' => ['4000.00', '50.00'],        // 2.5% = 100, capped at GHS 50
 ]);
 
 it('never takes a fee larger than the payment', function () {
+    useFeeRules(['default' => ['percentage' => 2.5, 'min' => 5]]);
+
     expect(PaystackConnect::feeFor(Money::major('2.00', 'GHS'))->toMajorString())->toBe('2.00');
 });
 
+it('takes a small, fair fee on small payments by default', function () {
+    // A GHS 10 sale: GHS 0.25 to the platform, GHS 9.75 to the seller.
+    expect(PaystackConnect::feeFor(Money::major('10.00', 'GHS'))->toMajorString())->toBe('0.25');
+});
+
+it('sets default fees that always cover Paystack\'s own fee, so the platform never loses money', function (string $currency, Closure $paystackFee) {
+    foreach ([1, 5, 10, 50, 100, 499, 2500, 2501, 5000, 9999, 10000, 20000, 150000, 1000000] as $major) {
+        $amount = Money::major((string) $major, $currency);
+        $ours = PaystackConnect::feeFor($amount)->minor;
+        $theirs = (int) ceil($paystackFee($amount->minor));
+
+        // Paystack can't take more than the payment itself.
+        expect($ours)->toBeGreaterThanOrEqual(min($theirs, $amount->minor), "{$currency} {$major}: ours {$ours}, Paystack {$theirs}");
+    }
+})->with([
+    // Rates from Paystack's published pricing, in minor units.
+    'GHS: 1.95%' => ['GHS', fn (int $m) => $m * 0.0195],
+    'NGN: 1.5% + NGN 100 over NGN 2,500, capped at NGN 2,000' => ['NGN', fn (int $m) => min($m * 0.015 + ($m >= 250000 ? 10000 : 0), 200000)],
+    'KES: 2.9% on cards (M-Pesa is 1.5%)' => ['KES', fn (int $m) => $m * 0.029],
+    'ZAR: 2.9% + R1, plus 15% VAT' => ['ZAR', fn (int $m) => ($m * 0.029 + 100) * 1.15],
+]);
+
 it('adds a flat fee on top of the percentage', function () {
-    config()->set('paystack-connect.fees', ['default' => ['percentage' => 1.5, 'flat' => '1.00']]);
-    app()->forgetInstance(Fees::class);
+    useFeeRules(['default' => ['percentage' => 1.5, 'flat' => '1.00']]);
 
     expect(PaystackConnect::feeFor(Money::major('200.00', 'USD'))->toMajorString())->toBe('4.00');
 });

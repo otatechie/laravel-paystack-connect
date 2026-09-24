@@ -54,8 +54,14 @@ return [
     | pesewas). Per-currency rules override the default; a currency without
     | its own rule uses the default alone.
     |
-    | Example with these settings: a GHS 50 payment gives 2.5% = GHS 1.25,
-    | raised to the GHS 5 minimum, so the seller receives GHS 45.
+    | Example: a GHS 10 payment gives you 2.5% = GHS 0.25; the seller gets
+    | GHS 9.75.
+    |
+    | With bearer 'account' (below) you pay Paystack's fee out of yours, so
+    | your fee must cover it or you lose money on each payment. These defaults
+    | cover Paystack's published rates: Ghana 1.95%; Nigeria 1.5% + NGN 100
+    | (over NGN 2,500, capped at NGN 2,000); Kenya up to 2.9% (cards); South
+    | Africa 2.9% + R1 + VAT. Check your own rates at paystack.com/pricing.
     |
     | To override the fee for one payment, use ->fee('10.00') at checkout.
     |
@@ -70,9 +76,9 @@ return [
         ],
 
         'currencies' => [
-            'GHS' => ['min' => 5, 'max' => 50],
-            'NGN' => ['min' => 500, 'max' => 5000],
-            'USD' => ['min' => 1, 'max' => 10],
+            'NGN' => ['min' => 250, 'max' => 5000],
+            'KES' => ['percentage' => 3],
+            'ZAR' => ['percentage' => 3.5, 'flat' => 1.50],
         ],
     ],
 
@@ -81,9 +87,9 @@ return [
     | Who pays Paystack's transaction fee
     |--------------------------------------------------------------------------
     |
-    | 'account': your platform pays it, out of your fee. With a GHS 5 fee and
-    | Paystack charging GHS 0.98, you keep GHS 4.02 and the seller gets their
-    | full share.
+    | 'account': your platform pays it, out of your fee. On a GHS 200 payment,
+    | your 2.5% is GHS 5, Paystack takes GHS 3.90, and you keep GHS 1.10; the
+    | seller gets their full share.
     |
     | 'subaccount': the seller pays it, out of their share.
     |
