@@ -121,27 +121,17 @@ return [
     | Webhooks
     |--------------------------------------------------------------------------
     |
-    | Paystack tells your app about payments and refunds by calling this
-    | route. In your Paystack dashboard (Settings > API Keys & Webhooks), put
-    | https://your-app.com/{path} in the *Webhook URL* field, not the
-    | Callback URL field; each checkout sends its own callback URL. Test and
-    | live mode each have their own webhook URL.
-    |
-    | Every request is checked against the x-paystack-signature header.
-    | middleware is added in front of that check, for example a throttle.
+    | Put https://your-app.com/{path} in the *Webhook URL* field of your
+    | Paystack dashboard (not Callback URL), in both test and live mode.
+    | Every request's signature is checked; middleware runs before that.
     | Set enabled to false to register your own route instead.
     |
-    | keep_days is how long processed events are kept. Schedule
-    | `model:prune --model=Otatechie\PaystackConnect\Models\WebhookEvent` to
-    | remove older ones; set it to null to keep them forever. Events that
-    | failed are always kept, so `paystack-connect:retry-webhooks` can
-    | process them again.
+    | keep_days: how long processed events are kept before `model:prune`
+    | removes them (null keeps them forever). Failed events are always kept.
     |
-    | allowed_ips adds a second check on where the request came from. To
-    | turn it on, uncomment Paystack's published webhook IPs below. Behind a
-    | proxy or load balancer (Cloudflare, AWS ELB, Forge with a balancer),
-    | configure Laravel's trusted proxies first, or every webhook will look
-    | like it came from the proxy and be rejected.
+    | allowed_ips: uncomment to accept only Paystack's servers. Behind a proxy
+    | or load balancer, set up Laravel's trusted proxies first, or every
+    | webhook will be rejected.
     |
     */
 
